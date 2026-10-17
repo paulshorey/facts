@@ -42,35 +42,40 @@ def treasury(store):
             sid = store.source(TOPIC, url, f"Treasury {table}: {period}", family="treasury-dataset")
             if store.db.execute("SELECT 1 FROM datasets WHERE source=?", (sid,)).fetchone():
                 continue
-            with httpx.Client(timeout=60) as client:
-                response = client.get(url)
-                response.raise_for_status()
-                payload = response.json()
-            raw = store.put(payload)
-            rows = payload["data"]
-            if int(payload.get("meta", {}).get("total-pages", 1)) > 1:
-                raise ValueError("Treasury snapshot exceeds requested page size; pagination required")
-            cid = store.capture(sid, "dataset_api", payload, "", {"period": period, "table": table})
-            # API amounts are dollars. The human-readable MTS PDF scales these to
-            # millions; its display convention must not be applied to API values.
-            did = dataset(store, sid, table+"-"+period, rows, {"period": period, "api_metadata": payload.get("meta"), "units": "USD", "unit_mapping": "treasury-api-dollars-v1", "hierarchy_preserved": True}, raw)
-            for row in rows:
-                expression = row.get("current_fytd_net_outly_amt")
-                if expression in (None, "null", ""):
-                    continue
-                try:
-                    amount = str(Decimal(expression.replace(",", "")))
-                except InvalidOperation:
-                    continue
-                label = row.get("classification_desc") or row.get("classification_id")
-                store.item(TOPIC, sid, cid, {"kind": "statistic", "title": f"FY{period[:4]} {label}",
-                    "detail": f"Treasury fiscal-year-to-date net outlays: {expression} USD. This row may be a subtotal or offset; source hierarchy is retained.",
-                    "dates": [{"role": "period_end", "value": period}], "tags": ["treasury", table, "outlays"],
-                    "measurements": [{"metric": "fiscal_year_to_date_net_outlays", "value": amount, "unit": "USD", "original_expression": expression, "original_unit": "USD", "period": period}],
-                    "data": {"dataset_id": did, "source_row": row}},
-                    {"type": "dataset_row", "classification_id": row.get("classification_id"), "period": period})
-            store.db.commit()
-            print(f"Treasury {table} {period}: {len(rows)} rows", flush=True)
+            try:
+                with httpx.Client(timeout=60) as client:
+                    response = client.get(url)
+                    response.raise_for_status()
+                    payload = response.json()
+                raw = store.put(payload)
+                rows = payload["data"]
+                if int(payload.get("meta", {}).get("total-pages", 1)) > 1:
+                    raise ValueError("Treasury snapshot exceeds requested page size; pagination required")
+                cid = store.capture(sid, "dataset_api", payload, "", {"period": period, "table": table})
+                # API amounts are dollars. The human-readable MTS PDF scales these to
+                # millions; its display convention must not be applied to API values.
+                did = dataset(store, sid, table+"-"+period, rows, {"period": period, "api_metadata": payload.get("meta"), "units": "USD", "unit_mapping": "treasury-api-dollars-v1", "hierarchy_preserved": True}, raw)
+                for row in rows:
+                    expression = row.get("current_fytd_net_outly_amt")
+                    if expression in (None, "null", ""):
+                        continue
+                    try:
+                        amount = str(Decimal(expression.replace(",", "")))
+                    except InvalidOperation:
+                        continue
+                    label = row.get("classification_desc") or row.get("classification_id")
+                    store.item(TOPIC, sid, cid, {"kind": "statistic", "title": f"FY{period[:4]} {label}",
+                        "detail": f"Treasury fiscal-year-to-date net outlays: {expression} USD. This row may be a subtotal or offset; source hierarchy is retained.",
+                        "dates": [{"role": "period_end", "value": period}], "tags": ["treasury", table, "outlays"],
+                        "measurements": [{"metric": "fiscal_year_to_date_net_outlays", "value": amount, "unit": "USD", "original_expression": expression, "original_unit": "USD", "period": period}],
+                        "data": {"dataset_id": did, "source_row": row}},
+                        {"type": "dataset_row", "classification_id": row.get("classification_id"), "period": period})
+                store.db.commit()
+                print(f"Treasury {table} {period}: {len(rows)} rows", flush=True)
+            except Exception as error:
+                store.attempt("dataset", url, "failed", metadata={"error_class": type(error).__name__, "table": table, "period": period})
+                store.db.commit()
+                print(f"Treasury snapshot failed {table} {period}: {type(error).__name__}", flush=True)
 
 
 def workbook(store, url, title=None):
@@ -125,7 +130,13 @@ def workbook(store, url, title=None):
 def run(store, all_omb=False):
     treasury(store)
     manifest = store.root / "storage/bootstrap/isolated-web-preflight.omb-downloads.json"
-    urls = [r["url"] for r in json.loads(manifest.read_text()) if r["url"].endswith(".xlsx")]
+    if manifest.exists():
+        urls = [r["url"] for r in json.loads(manifest.read_text()) if r["url"].endswith(".xlsx")]
+    else:
+        urls = [r[0] for r in store.db.execute("SELECT s.url FROM sources s JOIN topic_sources t ON t.source=s.id WHERE t.topic=? AND s.url LIKE '%.xlsx' ORDER BY s.url", (TOPIC,))]
+        store.attempt("dataset_manifest", "omb", "missing", metadata={"path": str(manifest.relative_to(store.root)), "catalog_workbooks": len(urls)})
+        store.db.commit()
+        print("OMB bootstrap manifest missing; using cataloged workbook URLs. Supply the manifest to expand OMB coverage.", flush=True)
     priority = ["outlays_fy2027.xlsx", "objclass_detail_fy2027.xlsx", "hist03z1_fy2027.xlsx", "hist03z2_fy2027.xlsx", "hist04z1_fy2027.xlsx", "budauth_fy2027.xlsx"]
     urls.sort(key=lambda u: priority.index(Path(u).name) if Path(u).name in priority else 99)
     if not all_omb:
