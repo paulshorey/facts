@@ -258,6 +258,21 @@ def normalize_table(store, manifest, mapping, digest, mapping_artifact=None):
                 for k, v in r.items():
                     if k != "source_row" and v is not None:
                         header_names[k] = plain(v)
+    dimension_columns = mapping.dimension_columns
+    if mapping.orientation == "long":
+        # Labels can be separate from declared dimensions. They still identify
+        # the account/category across its reporting periods.
+        dimension_columns = [*dimension_columns, *mapping.label_columns]
+    dimension_names = {}
+    for column in dict.fromkeys(dimension_columns):
+        if column == mapping.period_column:
+            continue
+        name = header_names.get(column) or column
+        # Distinct source columns may share a printed heading. Preserve both
+        # instead of letting a new account label overwrite an agency dimension.
+        while name in dimension_names:
+            name += f" [{column}]"
+        dimension_names[name] = column
     section = []
     store.db.execute("UPDATE organized_records SET active=0 WHERE input_key=?", (input_key,))
     try:
@@ -307,12 +322,7 @@ def normalize_table(store, manifest, mapping, digest, mapping_artifact=None):
                         p = {"label": spec.period or "unknown", "start": None, "end": None, "calendar": "unknown", "role": spec.period_role}
                     if spec.period_role != "unknown":
                         p["role"] = spec.period_role
-                    dimension_columns = mapping.dimension_columns
-                    if mapping.orientation == "long":
-                        # Labels can be separate from declared dimensions. They
-                        # still identify the account/category across its periods.
-                        dimension_columns = list(dict.fromkeys([*dimension_columns, *mapping.label_columns]))
-                    dims = {header_names.get(k, k): row.get(k) for k in dimension_columns if k != mapping.period_column}
+                    dims = {name: row.get(column) for name, column in dimension_names.items()}
                     key = [did, spec.metric, dims, hierarchy]
                     if mapping.orientation != "long":
                         key.append(row_id)

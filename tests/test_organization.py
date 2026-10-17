@@ -125,6 +125,25 @@ def test_long_series_keep_label_only_accounts_separate_across_periods(tmp_path):
     assert values[0]["period_end"] == "2025-09-30" and values[0]["calendar"] == "fiscal"
 
 
+def test_long_labels_with_duplicate_headings_do_not_overwrite_dimensions(tmp_path):
+    s = Store(tmp_path); topic(s, "us-federal-spending")
+    sid = s.source("us-federal-spending", "https://example.com/budget.xlsx")
+    rows = [{"source_row": "1", "column_1": "Name", "column_2": "Name", "column_3": "Year", "column_4": "Amount"},
+            {"source_row": "2", "column_1": "Agency A", "column_2": "Shared account", "column_3": "2025", "column_4": "10"},
+            {"source_row": "3", "column_1": "Agency B", "column_2": "Shared account", "column_3": "2025", "column_4": "20"}]
+    did = dataset(s, sid, "budget.xlsx:Sheet", rows, {}, s.put(b"raw", binary=True))
+    o = OrganizedStore(tmp_path)
+    manifest = json.loads(o.db.execute("SELECT payload FROM datasets WHERE id=?", (did,)).fetchone()[0])
+    mapping = TableMapping(orientation="long", header_rows=["1"], label_columns=["column_2"], dimension_columns=["column_1"],
+                           period_column="column_3", value_columns=[ValueColumn(column="column_4", metric="outlays", unit="USD", scale="1")])
+    result = normalize_table(o, manifest, mapping, "digest")
+    assert result["series_count"] == 2
+    series = o.query("us-federal-spending", kind="series", limit=0)
+    assert {tuple(sorted(r["dimensions"].values())) for r in series} == {("Agency A", "Shared account"), ("Agency B", "Shared account")}
+    values = pq.read_table(tmp_path / result["values_artifact"]).to_pylist()
+    assert len({v["series_id"] for v in values}) == 2
+
+
 @pytest.mark.parametrize("label,start,end,calendar", [
     ("FY2025", "2024-10-01", "2025-09-30", "fiscal"),
     ("fy 2025", "2024-10-01", "2025-09-30", "fiscal"),

@@ -166,7 +166,8 @@ using the modern October–September calendar.
 Explicit `FY` prefixes in table period labels also select the fiscal calendar,
 independently of the workbook filename. Long-format series retain account/category
 labels in their title and dimensions so different labeled rows remain separate
-across reporting periods. The `tables-v4` mapper invalidates older cached table
+across reporting periods. Repeated headings retain distinct source columns rather
+than overwriting a dimension. The `tables-v4` mapper invalidates older cached table
 outputs; the next organization pass rebuilds derived versions from retained rows.
 
 Code handles explicit field aliases, number scales, table transformations and
