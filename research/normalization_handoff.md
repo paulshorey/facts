@@ -97,6 +97,10 @@ Validation completed:
   (412,900,082 bytes checked).
 - The final adapter/provenance pass reused saved model outputs and made zero API
   requests, at zero additional inference cost.
+- All 176 exported table/row-coverage Parquet files resolve within their portable
+  snapshots. A restored SQLite snapshot passes `PRAGMA integrity_check` and
+  contains all 79,867 active records:
+  `storage/backups/catalog-organized-20261017T165632Z.sqlite`.
 
 Recorded API cost estimates total approximately $1.12 across pilots, repairs and
 the full pass, including conservative reservations for interrupted requests.
@@ -130,4 +134,5 @@ or Parquet files. Back up the full `storage/` directory and exports together.
 Private reports are under `storage/organized/`: `source-preservation-check.json`,
 `original-artifact-check.json`, `contract-and-treasury-check.json`,
 `final-lineage-check.json`, `export-report.json`, `postgres-sync-dry-run.json`,
+`portable-export-and-backup-check.json`,
 and the versioned run records in `runs/`.
