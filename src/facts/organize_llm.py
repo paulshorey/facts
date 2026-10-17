@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import concurrent.futures as futures
+import copy
 import json
+import math
 import os
 import time
 from datetime import datetime, timezone
@@ -23,7 +25,7 @@ PROMPTS["semantic"] += " Use canonical_name and aliases only for alternative nam
 
 
 def settings(stage, model=MODEL):
-    return {"stage": stage, "model": model, "prompt_version": PROMPT_VERSION,
+    config = {"stage": stage, "model": model, "prompt_version": PROMPT_VERSION,
             "schema_digest": ident("schema", SCHEMAS[stage].model_json_schema()),
             "prompt_digest": ident("prompt", PROMPTS[stage]),
             "taxonomy_version": TAXONOMY_VERSION, "max_tokens": 12000 if stage == "semantic" else 6500,
@@ -31,14 +33,26 @@ def settings(stage, model=MODEL):
             "input_usd_per_million": float(os.getenv("FACTS_ORGANIZE_INPUT_RATE", "0.15")),
             "output_usd_per_million": float(os.getenv("FACTS_ORGANIZE_OUTPUT_RATE", "0.50")),
             "pricing_basis": "estimated standard rates, 2026-10-17; configure rates when changing model"}
+    if any(not math.isfinite(config[k]) or config[k] <= 0 for k in ["input_usd_per_million", "output_usd_per_million"]):
+        raise ValueError("Model token rates must be positive and finite")
+    return config
 
 
 def enqueue(store, topic, stage, payload, model=MODEL):
     config = settings(stage, model)
     identity = {k: v for k, v in config.items() if k not in {"input_usd_per_million", "output_usd_per_million", "pricing_basis"}}
-    jid = ident("organize-job", identity, payload)
+    cache_payload = payload
+    if stage == "grouping":
+        cache_payload = copy.deepcopy(payload)
+        for entry in cache_payload["entries"]:
+            entry.pop("version", None)
+            for candidate in entry.get("candidates", []):
+                candidate.pop("version", None)
+    jid = ident("organize-job", identity, cache_payload)
     artifact = store.put(payload)
     store.db.execute("INSERT OR IGNORE INTO organized_jobs(id,topic,stage,input_artifact,settings,state,updated) VALUES (?,?,?,?,?,'queued',?)", (jid, topic, stage, artifact, dumps(config), now()))
+    if stage == "grouping":
+        store.db.execute("UPDATE organized_jobs SET input_artifact=? WHERE id=? AND state IN ('queued','failed_retryable')", (artifact,jid))
     return jid
 
 
@@ -49,6 +63,8 @@ def body_for(job, payload):
     prompt = PROMPTS[stage] + "\nJSON Schema:\n" + dumps(schema)
     if job["attempts"]:
         prompt += "\nA previous attempt failed validation: "+str(job.get("error"))[:300]+". Correct that error; preserve exact IDs, literal source expressions and JSON pointers."
+    if payload.get("_repair_errors"):
+        prompt += "\nThis is a single-input repair. Return that input_id exactly once. Omit optional entity/date/amount proposals that cannot be grounded in literal supplied text; preserve the observation itself. Repair errors: "+dumps(payload["_repair_errors"])
     return {"model": config["model"], "temperature": config["temperature"],
             "max_tokens": config["max_tokens"], "reasoning_effort": config["reasoning_effort"],
             "response_format": {"type": "json_schema", "json_schema": {"name": SCHEMAS[stage].__name__, "schema": schema}},
@@ -88,8 +104,8 @@ def retry_delay(header, attempt):
 
 class Budget:
     def __init__(self, maximum):
-        if maximum < 0:
-            raise ValueError("Cost ceiling must be nonnegative")
+        if not math.isfinite(maximum) or maximum < 0:
+            raise ValueError("Cost ceiling must be nonnegative and finite")
         self.maximum, self.spent, self.inflight = maximum, 0.0, 0.0
         self.stopped = False
         self.authentication_failed = False
@@ -115,7 +131,7 @@ def run_jobs(store, topics, stage, budget, apply, workers=2, allowed_ids=None):
     # A process crash after submission may have incurred a charge. Reconcile that
     # persisted reservation before allowing a retry; never claim free retries.
     placeholders = ",".join("?" for _ in topics)
-    store.db.execute(f"UPDATE organized_jobs SET cost=cost+reserved,reserved=0,state='failed_retryable',error='interrupted_attempt_cost_reserved' WHERE state='running' AND stage=? AND topic IN ({placeholders})", (stage, *topics))
+    store.db.execute(f"UPDATE organized_jobs SET cost=cost+reserved,reserved=0,state=CASE WHEN attempts<3 THEN 'failed_retryable' ELSE 'failed_terminal' END,error='interrupted_attempt_cost_reserved' WHERE state='running' AND stage=? AND topic IN ({placeholders})", (stage, *topics))
     store.db.commit()
     processed, failures, stopped_auth = 0, 0, False
     if allowed_ids is not None:
@@ -195,7 +211,18 @@ def run_jobs(store, topics, stage, budget, apply, workers=2, allowed_ids=None):
                             # Applying a result and setting succeeded share one transaction.
                             store.db.execute("SAVEPOINT apply_result")
                             try:
-                                apply(job, payload, parsed, artifact)
+                                application = apply(job, payload, parsed, artifact)
+                                if stage == "semantic" and isinstance(application, dict) and application.get("unprocessed"):
+                                    if int(payload.get("_repair_depth", 0)) < 1:
+                                        for source in payload["inputs"]:
+                                            if source["id"] in application["unprocessed"]:
+                                                child_payload = {**payload, "inputs": [source], "_parent_job_id": job["id"], "_repair_depth": 1,
+                                                    "_repair_errors": {source["id"]: application["errors"][source["id"]]}}
+                                                children.append(enqueue(store, job["topic"], stage, child_payload, config["model"]))
+                                        state = "partial"
+                                    else:
+                                        state = "failed_terminal"
+                                    error = dumps(application["errors"])[:600]
                                 store.db.execute("RELEASE apply_result")
                             except BaseException:
                                 store.db.execute("ROLLBACK TO apply_result"); store.db.execute("RELEASE apply_result")
@@ -204,6 +231,9 @@ def run_jobs(store, topics, stage, budget, apply, workers=2, allowed_ids=None):
                         error = type(exc).__name__+": "+str(exc)[:220] if isinstance(exc, ValueError) else type(exc).__name__
                         state = "failed_retryable" if attempt < 2 else "failed_terminal"
                 ready_at = time.time()+retry_delay(result["retry_after"], attempt)
+                if stage == "semantic" and state == "failed_terminal":
+                    from .organize import mark_semantic_failure
+                    mark_semantic_failure(store, job, payload, artifact)
                 if result["status"] == 429:
                     budget.provider_ready_at = max(budget.provider_ready_at, ready_at)
                     for queued in queue:

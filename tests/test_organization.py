@@ -126,7 +126,7 @@ def test_semantic_results_require_complete_inputs_and_grounded_fields(tmp_path):
     with pytest.raises(ValueError, match="every input"):
         apply_semantic(o, job, payload, SemanticBatch(results=[]), "artifact")
     invalid = part(); invalid["entities"][0]["name"] = "Invented Person"
-    with pytest.raises(ValueError, match="absent"):
+    with pytest.raises(ValueError, match="resolved"):
         apply_semantic(o, job, payload, SemanticBatch.model_validate({"results": [{"input_id": original["id"], "parts": [invalid]}]}), "artifact")
 
 
@@ -177,6 +177,7 @@ def test_export_keeps_originals_and_portable_series(tmp_path):
     folder = tmp_path / result[0]["path"]
     observed = json.loads((folder / "observations.jsonl").read_text().splitlines()[0])
     assert observed["input_ids"] == [original["id"]]
+    assert observed["references"][0]["acquisition_type"] == "direct_http"
     assert (folder / "manifest.json").exists()
     assert (folder / "references.jsonl").exists()
     assert s.db.execute("SELECT payload FROM items WHERE id=?", (original["id"],)).fetchone()[0] == dumps(original)
@@ -242,3 +243,115 @@ def test_auth_failure_stops_later_stages(tmp_path, monkeypatch):
     second = run_jobs(o, ["topic"], "semantic", budget, lambda *a: None)
     assert first["state"] == second["state"] == "authentication_failed"
     assert len(calls) == 1
+
+
+def test_cost_limits_reject_nonfinite_or_negative_values():
+    for value in [float("nan"), float("inf"), -1]:
+        with pytest.raises(ValueError):
+            Budget(value)
+
+
+def test_explicit_entity_alias_reuses_canonical_id_and_preserves_junior(tmp_path):
+    o = OrganizedStore(tmp_path)
+    full = {"name": "Congressional Budget Office", "entity_type": "organization", "aliases": ["CBO"], "input_path": "/detail"}
+    eid = o.entity(full, ["input"])
+    assert o.entity({"name": "CBO", "entity_type": "organization"}) == eid
+    senior = o.entity({"name": "Donald Trump", "entity_type": "person"})
+    junior = o.entity({"name": "Donald Trump Jr.", "entity_type": "person"})
+    assert senior != junior
+
+
+def test_source_path_repairs_use_supplied_fields_only():
+    from facts.organize import repair_source_path, grounded
+    source = {"data": {"source_urls": ["https://example.com"], "entities": ["Donald Trump"]}, "detail": "Trump made a statement."}
+    assert repair_source_path(source, "/source_urls/0") == "/data/source_urls/0"
+    assert repair_source_path(source, "/detail", ["Donald Trump"]) == "/data/entities/0"
+    with pytest.raises(ValueError):
+        grounded(source, "/detail", "$TRUMP")
+
+
+def test_partial_response_saves_valid_items_and_identifies_omissions(tmp_path):
+    from facts.organize import apply_semantic_partial
+    s = Store(tmp_path); topic(s)
+    a = item(s)
+    b = item(s, title="Another contract", detail="Acme announced another contract on May 2, 2025.")
+    o = OrganizedStore(tmp_path)
+    parsed = SemanticBatch.model_validate({"results": [{"input_id": a["id"], "parts": [part()]}]})
+    report = apply_semantic_partial(o, {"id": "job", "settings": dumps({"model": "test"})}, {"inputs": [a, b], "taxonomy": {"other": []}}, parsed, "artifact")
+    assert report["unprocessed"] == [b["id"]]
+    assert len(o.query("topic")) == 1
+
+
+def test_raw_amount_strings_and_zeroes_remain_available(tmp_path):
+    s = Store(tmp_path); topic(s)
+    original = item(s, data={"amounts": ["more than $1.4 billion", {"amount": 0, "unit": "USD"}], "custom_field": False})
+    observed = adapt_item(original)
+    assert Decimal(observed.measurements[0].value) == Decimal("1400000000")
+    assert observed.measurements[1].value == "0"
+    assert observed.source_fields["data"]["custom_field"] is False
+
+
+def test_cached_partial_results_replay_after_adapter_upgrade(tmp_path, monkeypatch):
+    s = Store(tmp_path); topic(s); a = item(s)
+    b = item(s, title="Unrelated Acme lawsuit", detail="Acme announced another contract on May 2, 2025.")
+    monkeypatch.setenv("FIREWORKS_API_KEY", "test-placeholder")
+    calls = []
+    def fake_request(body):
+        payload = json.loads(body["messages"][-1]["content"]); calls.append(payload)
+        source = payload["inputs"][0]
+        result = {"results": [{"input_id": source["id"], "parts": [part()]}]}
+        return {"status": 200, "raw": {"choices": [{"finish_reason": "stop", "message": {"content": dumps(result)}}], "usage": {"prompt_tokens": 100, "completion_tokens": 100}}, "retry_after": None}
+    monkeypatch.setattr("facts.organize_llm.request", fake_request)
+    first = organize(tmp_path, maximum=1, model="test")
+    assert len(calls) == 2 and first["coverage"]["coverage"]["item:semantic"] == 2
+    monkeypatch.setattr("facts.organize.ADAPTER_VERSION", "test-upgraded-adapter")
+    second = organize(tmp_path, maximum=1, model="test")
+    assert len(calls) == 2 and second["coverage"]["coverage"]["item:semantic"] == 2
+
+
+def test_terminal_semantic_failure_is_cached_until_explicit_retry(tmp_path, monkeypatch):
+    s = Store(tmp_path); topic(s); item(s)
+    monkeypatch.setenv("FIREWORKS_API_KEY", "test-placeholder")
+    calls = []
+    def fake_request(body):
+        payload = json.loads(body["messages"][-1]["content"]); calls.append(payload)
+        proposal = part()
+        if len(calls) <= 2:
+            proposal["entities"][0]["name"] = "Invented Person"
+        result = {"results": [{"input_id": payload["inputs"][0]["id"], "parts": [proposal]}]}
+        return {"status": 200, "raw": {"choices": [{"finish_reason": "stop", "message": {"content": dumps(result)}}], "usage": {"prompt_tokens": 100, "completion_tokens": 100}}, "retry_after": None}
+    monkeypatch.setattr("facts.organize_llm.request", fake_request)
+    first = organize(tmp_path, maximum=1, model="test")
+    assert len(calls) == 2 and first["coverage"]["coverage"]["item:semantic_unresolved"] == 1
+    organize(tmp_path, maximum=1, model="test")
+    assert len(calls) == 2
+    last = organize(tmp_path, maximum=1, model="test", retry_failed=True)
+    assert len(calls) == 3 and last["coverage"]["coverage"]["item:semantic"] == 1
+
+
+def test_financial_basis_normalization_preserves_original_description():
+    value = measurement("$1 million", basis="net-outlays")
+    assert value.basis == "net_outlays" and value.original_basis == "net-outlays"
+    assert measurement("$1 million", basis="estimated").basis is None
+
+
+def test_group_cache_identity_ignores_bookkeeping_versions(tmp_path):
+    o = OrganizedStore(tmp_path)
+    a = {"entries":[{"id":"one","version":"v1","title":"Example","candidates":[{"id":"two","version":"v1","title":"Related"}]}]}
+    b = json.loads(dumps(a));b["entries"][0]["version"]="v2";b["entries"][0]["candidates"][0]["version"]="v2"
+    first = enqueue(o,"topic","grouping",a,"test")
+    second = enqueue(o,"topic","grouping",b,"test")
+    assert first == second
+    payload=json.loads(o.read(o.db.execute("SELECT input_artifact FROM organized_jobs WHERE id=?",(second,)).fetchone()[0]))
+    assert payload == b
+
+
+def test_incompatible_group_match_remains_a_related_link(tmp_path):
+    from facts.organize_groups import apply_decisions
+    o=OrganizedStore(tmp_path)
+    a={"id":"a","version":"v1","title":"Acme drone contract","entities":[{"name":"Acme"}],"dates":[{"role":"event","start":"2025-01-01","end":"2025-01-01"}]}
+    b={"id":"b","version":"v1","title":"Acme drone contract","entities":[{"name":"Acme"}],"dates":[{"role":"event","start":"2025-12-01","end":"2025-12-01"}]}
+    a['candidates']=[b]
+    decisions=GroupBatch.model_validate({'results':[{'input_id':'a','candidate_id':'b','relation':'same_occurrence'}]})
+    apply_decisions(o,{'id':'job'},{'entries':[a]},decisions,'artifact')
+    assert o.db.execute('SELECT relation FROM organized_relations').fetchone()[0]=='related_subject'

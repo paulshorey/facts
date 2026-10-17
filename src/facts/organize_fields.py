@@ -85,6 +85,24 @@ def unit_scale(text):
     return text, "1"
 
 
+def financial_basis(text):
+    value = re.sub(r"[_-]+", " ", plain(text).casefold())
+    for basis, terms in [
+        ("net_outlays", ["net outlay"]), ("gross_outlays", ["gross outlay"]),
+        ("applicable_receipts", ["applicable receipt"]), ("budget_authority", ["budget authority"]),
+        ("tax_expenditures", ["tax expenditure", "revenue loss"]),
+        ("outlays", ["outlay"]), ("obligations", ["obligation"]),
+        ("receipts", ["receipt"]), ("balance", ["balance"]),
+        ("income", ["income"]), ("revenue", ["revenue"]),
+        ("valuation", ["valuation", "asset value", "holdings value"]),
+        ("investment", ["investment"]), ("savings", ["saving"]),
+        ("deficit", ["deficit"]), ("debt", ["debt"]), ("cost", ["cost"]),
+    ]:
+        if any(re.search(r"\b"+re.escape(term), value) for term in terms):
+            return basis
+    return None
+
+
 def measurement(expression, *, unit=None, value=None, metric="unspecified", period=None,
                 basis=None, value_kind="unknown", qualifier=None, input_path=""):
     original = plain(expression)
@@ -127,7 +145,7 @@ def measurement(expression, *, unit=None, value=None, metric="unspecified", peri
     return Measurement(metric=metric or "unspecified", value=parsed, low=low, high=high,
                        comparator=comparator if parsed is not None or low is not None else "unknown",
                        original_expression=original, original_unit=unit, unit=normalized_unit,
-                       scale=scale, period=plain(period) or None, basis=basis,
+                       scale=scale, period=plain(period) or None, basis=financial_basis(basis), original_basis=basis,
                        value_kind=value_kind, qualifier=plain(qualifier) or None, input_path=input_path)
 
 
@@ -212,8 +230,9 @@ def adapt_item(item):
                          title=title or "Untitled source entry", detail=plain(item.get("detail")),
                          original_text=plain(item.get("original_text")), input_ids=[item["id"]],
                          references=refs, original_tags=[str(t) for t in item.get("tags", []) if t is not None],
-                         field_lineage={"title": ["/title"], "detail": ["/detail"], "subtype": ["/collection_metadata/source_item_kind", "/kind"]},
-                         processing={"origin": origin, "method": "deterministic"})
+                         field_lineage={"title": ["/title"] if "title" in item else [], "detail": ["/detail"] if "detail" in item else [], "subtype": ["/collection_metadata/source_item_kind"] if item.get("collection_metadata", {}).get("source_item_kind") else ["/kind"]},
+                         processing={"origin": origin, "method": "deterministic"},
+                         source_fields={k: item[k] for k in ["data", "dates", "measurements"] if k in item} | {"original_kind": original_kind})
     for i, entity in enumerate(item.get("entities") or data.get("entities") or []):
         name = entity.get("name") if isinstance(entity, dict) else entity
         if name:
@@ -224,6 +243,8 @@ def adapt_item(item):
         expression = next((obj.get(k) for k in ["original_expression", "expression", "date", "iso", "normalized_date", "normalized", "period", "value", "text", "point", "year"] if obj.get(k) is not None), "")
         if not expression and obj.get("start") and obj.get("end"):
             expression = str(obj["start"]) + "–" + str(obj["end"])
+        if not expression:
+            expression = json.dumps(obj, ensure_ascii=False)
         result.dates.append(parse_date(expression, obj.get("role") or obj.get("context") or "unknown", f"/dates/{i}"))
     if data.get("date"):
         result.dates.append(parse_date(data["date"], data.get("date_type") or "event", "/data/date"))
@@ -242,7 +263,10 @@ def adapt_item(item):
             qualifier=m.get("qualifier"), input_path=f"/measurements/{i}"))
     for i, m in enumerate(data.get("amounts") or []):
         if isinstance(m, dict):
-            result.measurements.append(measurement(m.get("original_text") or m.get("text") or m.get("amount") or m.get("value"), unit=m.get("unit") or m.get("currency"), value=m.get("value"), metric=m.get("description") or m.get("label") or "reported amount", period=m.get("period"), qualifier=m.get("qualifier"), input_path=f"/data/amounts/{i}"))
+            expression = next((m[k] for k in ["original_expression", "original_text", "text", "amount", "value"] if m.get(k) is not None), "")
+            result.measurements.append(measurement(expression, unit=m.get("unit") or m.get("currency"), value=m.get("value"), metric=m.get("description") or m.get("label") or "reported amount", period=m.get("period"), qualifier=m.get("qualifier"), input_path=f"/data/amounts/{i}"))
+        elif isinstance(m, (str, int, float)) and not isinstance(m, bool):
+            result.measurements.append(measurement(m, metric="reported amount", input_path=f"/data/amounts/{i}"))
     if data.get("attributed_author"):
         result.attribution.append(Attribution(name=str(data["attributed_author"]), role="reported_by", input_path="/data/attributed_author"))
     result.categories = categories(item["topic"], " ".join([title, result.detail, *result.original_tags]))

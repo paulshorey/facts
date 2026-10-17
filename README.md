@@ -130,6 +130,8 @@ organization layer below supplies reversible grouping without editing the source
 
 The approved specification is
 [`_working/content_normalization_plan.md`](_working/content_normalization_plan.md).
+The completed corpus results and recovery notes are in
+[`research/normalization_handoff.md`](research/normalization_handoff.md).
 Organization reads the saved items/tables and leaves source records, raw captures,
 and the extraction queue intact. It stores new versioned observations, entities,
 group memberships, jobs, mappings and coverage in the same local catalog. Financial
@@ -170,6 +172,13 @@ layouts remain inspectable. Similar descriptions never replace source observatio
 or choose a preferred figure. Source leads, comments, captions, table observations
 and substantive prose have separate `content_role` fields.
 
+Observations also retain `source_fields` for supplied structured fields that do
+not fit the shared model. Measurements keep `original_basis` beside the canonical
+financial basis. Entity aliases require supplied alternative names; the original
+names and their evidence remain accessible. Group definitions retain membership
+versions and history; cached match decisions can be applied to new processing
+versions when their semantic inputs are unchanged.
+
 `FIREWORKS_API_KEY` enables structured inference. `FACTS_MODEL` or `--model`
 selects the model. The default reuses GLM 5.3 Flash. Rates default to $0.15 input
 and $0.50 generated tokens per million, estimated standard prices as of
@@ -180,12 +189,20 @@ the reserved request ceiling. These estimates are not a provider billing report.
 
 The $10 limit is per command invocation, including reserved in-flight capacity.
 Work stops at the ceiling with unfinished jobs retained. There are at most two
-provider requests in flight. HTTP 401/403 stop submissions; Retry-After is persisted
+provider requests in flight by default; `--workers 1` through `--workers 8`
+provide bounded overrides (the full-corpus run used eight after measuring latency).
+HTTP 401/403 stop submissions; Retry-After is persisted
 and respected. Truncated multi-item batches split, successful jobs remain cached,
 and invalid structured results get one validation retry. Interrupted submissions
 retain their conservative cost reservation and may be retried; exactly-once
 provider billing is not promised. Local per-topic file locks prevent overlapping
 organization commands, including `all` versus a specific topic.
+
+Partial valid batches keep their successful observations and create single-input
+repair jobs only for omitted/malformed results. A terminal failure leaves a
+`semantic_unresolved` record with the original fields and response pointers.
+Ordinary reruns do not pay to retry unchanged terminal inputs; use
+`organize --retry-failed` explicitly after inspecting/fixing the cause.
 
 New private artifacts live in `storage/organized/` (requests/responses also use
 the existing content-addressed objects). The first execution saves

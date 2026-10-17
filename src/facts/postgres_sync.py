@@ -33,7 +33,7 @@ def records(store):
         from .core import ident
         yield 'topic_sources',ident('membership',value),row['topic'],value
     # Organization is optional and may not have run on a fresh collector.
-    tables = ['organized_records','organized_entities','organized_aliases','organized_groups',
+    tables = ['organized_records','organized_entities','organized_aliases','organized_groups','organized_group_history',
               'organized_memberships','organized_relations','organized_links','organized_coverage',
               'organized_jobs','organized_runs','organized_tables','organized_mappings']
     for table in tables:

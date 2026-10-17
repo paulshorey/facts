@@ -28,6 +28,9 @@ CREATE TABLE IF NOT EXISTS organized_aliases (
 CREATE INDEX IF NOT EXISTS organized_alias ON organized_aliases(alias,entity_type);
 CREATE TABLE IF NOT EXISTS organized_groups (
  id TEXT PRIMARY KEY, topic TEXT NOT NULL, group_kind TEXT NOT NULL,payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS organized_group_history (
+ id TEXT NOT NULL,version TEXT NOT NULL,topic TEXT NOT NULL,payload TEXT NOT NULL,
+ PRIMARY KEY(id,version));
 CREATE TABLE IF NOT EXISTS organized_memberships (
  group_id TEXT NOT NULL,record_id TEXT NOT NULL,relation TEXT NOT NULL,
  PRIMARY KEY(group_id,record_id,relation));
@@ -191,6 +194,8 @@ class OrganizedStore:
                     continue
                 members = self.db.execute("SELECT r.payload FROM organized_memberships m JOIN organized_records r ON r.id=m.record_id AND r.active=1 WHERE m.group_id=? ORDER BY r.id", (p["id"],)).fetchall()
                 p["members"] = [json.loads(m[0]) for m in members]
+                if p.get("member_versions"):
+                    p["members"] = [m for m in p["members"] if p["member_versions"].get(m["id"]) == m["processing"]["version"]]
                 if filtered_ids is not None and not filtered_ids.intersection(m["id"] for m in p["members"]):
                     continue
                 if not p["members"]:
@@ -209,8 +214,8 @@ class OrganizedStore:
         if category:
             clauses.append("EXISTS(SELECT 1 FROM organized_links l WHERE l.record_id=r.id AND l.version=r.version AND l.target_kind='category' AND l.target_id=?)"); params.append(category)
         if entity:
-            clauses.append("EXISTS(SELECT 1 FROM organized_links l JOIN organized_entities e ON e.id=l.target_id WHERE l.record_id=r.id AND l.version=r.version AND l.target_kind='entity' AND (e.id=? OR lower(json_extract(e.payload,'$.name')) LIKE ?))")
-            params += [entity, "%"+entity.casefold()+"%"]
+            clauses.append("EXISTS(SELECT 1 FROM organized_links l JOIN organized_entities e ON e.id=l.target_id WHERE l.record_id=r.id AND l.version=r.version AND l.target_kind='entity' AND (e.id=? OR lower(json_extract(e.payload,'$.name')) LIKE ? OR EXISTS(SELECT 1 FROM organized_aliases a WHERE a.entity_id=e.id AND a.alias LIKE ?)))")
+            params += [entity, "%"+entity.casefold()+"%", "%"+name_key(entity)+"%"]
         if group:
             clauses.append("EXISTS(SELECT 1 FROM organized_memberships m WHERE m.record_id=r.id AND m.group_id=?)"); params.append(group)
         if contains:

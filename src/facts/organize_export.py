@@ -11,6 +11,8 @@ from .contracts import VERSION, Observation, SeriesDefinition, EntityDefinition,
 from .core import ROOT, dumps, ident, now
 from .organize_store import OrganizedStore
 
+EXPORT_VERSION = "organized-export.v1"
+
 
 def write_json(path, value):
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2, default=str)+"\n")
@@ -18,6 +20,7 @@ def write_json(path, value):
 
 def export_organized(root=ROOT, topic="all"):
     store = OrganizedStore(root, readonly=True)
+    store.db.execute("BEGIN")
     if not store.exists():
         raise ValueError("Run facts organize before exporting organized data")
     topics = [r[0] for r in store.db.execute("SELECT id FROM topics ORDER BY id") if topic == "all" or r[0] == topic]
@@ -25,9 +28,19 @@ def export_organized(root=ROOT, topic="all"):
     for selected in topics:
         inventory = store.inventory(selected)
         records = store.query(selected, limit=0)
+        source_index = {r["id"]:dict(r) for r in store.db.execute("SELECT * FROM sources")}
+        capture_index = {r["id"]:dict(r) for r in store.db.execute("SELECT id,level,state,artifact,text_artifact,acquired FROM captures")}
+        for record in records:
+            for reference in record.get("references", []):
+                source = source_index.get(reference.get("source_id"), {})
+                capture = capture_index.get(reference.get("capture_id"), {})
+                reference.update({"source_title":source.get("title"),"published":source.get("published"),
+                    "acquisition_type":capture.get("level"),"capture_state":capture.get("state"),
+                    "acquired_at":capture.get("acquired"),"capture_artifact":capture.get("artifact"),
+                    "capture_text_artifact":capture.get("text_artifact")})
         groups = [json.loads(r[0]) for r in store.db.execute("SELECT payload FROM organized_groups WHERE topic=? ORDER BY id", (selected,))]
         tables = [json.loads(r[0]) for r in store.db.execute("SELECT payload FROM organized_tables WHERE topic=? ORDER BY id", (selected,))]
-        snapshot = ident("snapshot", selected, [(r["id"], r["processing"]["version"]) for r in records], groups, inventory)
+        snapshot = ident("snapshot", EXPORT_VERSION, selected, [(r["id"], r["processing"]["version"]) for r in records], groups, inventory, source_index, capture_index)
         parent = store.root / "exports" / selected / "organized-v1"
         parent.mkdir(parents=True, exist_ok=True)
         final = parent / snapshot
@@ -76,10 +89,10 @@ def export_organized(root=ROOT, topic="all"):
                         output.write(dumps(value)+"\n")
                 roles = Counter(r.get("content_role") for r in records)
                 counts = Counter(c for r in records for c in r.get("categories", []))
-                manifest = {"schema_version": VERSION, "snapshot": snapshot, "topic": selected, "exported_at": now(),
+                manifest = {"schema_version": VERSION, "exporter_version": EXPORT_VERSION, "snapshot": snapshot, "topic": selected, "exported_at": now(),
                     "counts": inventory, "content_roles": dict(roles), "categories": dict(counts),
                     "table_values": sum(t["value_count"] for t in tables),
-                    "source_reference_count": len(references), "artifact_paths": "relative to this export directory",
+                    "source_reference_count": len(references), "artifact_paths": "values_artifact and row_coverage_artifact are export-relative; original/raw/capture artifact pointers are private collector-root-relative provenance",
                     "raw_artifacts": "retained privately in the collector; not included in this portable export",
                     "costs": "token-based estimates; unknown usage charged at reserved upper bound",
                     "corrections": [{"id": "treasury-api-dollars-v1", "description": "Organized Treasury values use the saved API dollars. Legacy item.v1 measurements and dataset unit labels can contain a million-fold scaling error; originals retained."}],
@@ -105,6 +118,7 @@ def export_organized(root=ROOT, topic="all"):
         # Convenient human entry point; immutable full snapshot remains above.
         shutil.copyfile(final / "inventory.md", parent / "inventory.md")
         results.append({"topic": selected, "path": str(final.relative_to(store.root)), "snapshot": snapshot, "counts": inventory})
+    store.db.close()
     return results
 
 
@@ -116,6 +130,7 @@ def query_series(root=ROOT, topic="all", *, period=None, basis=None, limit=20):
     args = () if topic == "all" else (topic,)
     sql = "SELECT payload FROM organized_tables"+(" WHERE topic=?" if topic != "all" else "")
     files = [str(store.root / json.loads(r[0])["values_artifact"]) for r in store.db.execute(sql, args)]
+    store.db.close()
     if not files:
         return []
     clauses, params = [], [files]

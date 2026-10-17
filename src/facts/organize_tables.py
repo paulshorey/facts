@@ -15,9 +15,9 @@ import pyarrow.parquet as pq
 
 from .contracts import VERSION, TableMapping, ValueColumn
 from .core import dumps, ident
-from .organize_fields import categories, decimal_text, parse_date, plain, unit_scale
+from .organize_fields import categories, decimal_text, financial_basis, parse_date, plain, unit_scale
 
-MAPPER_VERSION = "tables-v2"
+MAPPER_VERSION = "tables-v3"
 YEAR = re.compile(r"^(?:FY\s*)?((?:17|18|19|20|21)\d{2})(?:\s*[-–]\s*((?:17|18|19|20|21)\d{2}))?(?:\s*(?:estimate[ds]?|actual[ s]*|projection|enacted|proposed))?(?:\s*\d/)?$", re.I)
 VALUE_SCHEMA = pa.schema([
     ("series_id", pa.string()), ("dataset_id", pa.string()), ("period", pa.string()),
@@ -317,7 +317,7 @@ def normalize_table(store, manifest, mapping, digest, mapping_artifact=None):
                             title = spec.metric
                         series[sid] = {"schema_version": VERSION, "id": sid, "topic": "us-federal-spending", "record_type": "series", "content_role": "dataset", "kind": "series", "subtype": mapping.orientation,
                             "title": title, "detail": f"{manifest['name']}: {spec.metric}", "input_ids": [did],
-                            "dataset_id": did, "metric": spec.metric, "basis": spec.basis,
+                            "dataset_id": did, "metric": spec.metric, "basis": financial_basis(spec.basis), "original_basis": spec.basis,
                             "unit": spec.unit, "scale": spec.scale, "unit_evidence": spec.unit_evidence,
                             "dimensions": dims, "hierarchy": hierarchy, "row_role": "total" if re.search(r"\btotal\b", title, re.I) else "detail",
                             "categories": categories("us-federal-spending", title+" "+" ".join(hierarchy)),
@@ -333,7 +333,7 @@ def normalize_table(store, manifest, mapping, digest, mapping_artifact=None):
                         warnings.append("decimal_outside_parquet_precision")
                     values.append({"series_id": sid, "dataset_id": did, "period": p["label"], "period_start": p["start"], "period_end": p["end"], "calendar": p["calendar"], "period_role": p["role"], "source_row": row_id, "source_column": spec.column,
                         "original_expression": plain(original), "source_value": source_decimal, "value": normalized_decimal,
-                        "unit": spec.unit, "scale": spec.scale, "basis": spec.basis, "value_kind": spec.value_kind, "warnings": dumps(warnings)})
+                        "unit": spec.unit, "scale": spec.scale, "basis": financial_basis(spec.basis), "value_kind": spec.value_kind, "warnings": dumps(warnings)})
                     linked.append(sid)
                 if values:
                     state = "normalized"
@@ -341,10 +341,13 @@ def normalize_table(store, manifest, mapping, digest, mapping_artifact=None):
                     # Preserve section labels as hierarchy and keep note text in row provenance.
                     state = "metadata"
                     if len(label) < 240 and not re.match(r"\d+/|note|source|memorandum", label, re.I):
-                        if label.endswith(":"):
-                            section = [label.rstrip(":")]
-                        elif re.match(r"\d{3}\s", label):
-                            section = [*section[:1], label]
+                        code = re.match(r"(\d{3})\s", label)
+                        if code:
+                            parent = code[1][:2]+"0"
+                            root = next((s for s in section if s.startswith(parent+" ")), None)
+                            section = [root, label.rstrip(":")] if root and code[1] != parent else [label.rstrip(":")]
+                        elif label.endswith(":"):
+                            section = [*section[:2], label.rstrip(":")]
                 elif all(v in (None, "", "null") for k, v in row.items() if k != "source_row"):
                     state = "metadata"
             counts[state] += 1

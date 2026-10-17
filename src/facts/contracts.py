@@ -36,6 +36,7 @@ class Measurement(Contract):
     scale: str | None = None
     period: str | None = None
     basis: str | None = None
+    original_basis: str | None = None
     value_kind: str = "unknown"
     qualifier: str | None = None
     input_path: str = ""
@@ -81,6 +82,7 @@ class Observation(Contract):
     field_lineage: dict[str, list[str]] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
     processing: dict = Field(default_factory=dict)
+    source_fields: dict = Field(default_factory=dict)
 
 
 class ValueColumn(Contract):
@@ -168,6 +170,7 @@ class SeriesDefinition(Contract):
     dataset_id: str
     metric: str
     basis: str | None
+    original_basis: str | None = None
     unit: str | None
     scale: str | None
     unit_evidence: str | None
@@ -203,3 +206,5 @@ class GroupDefinition(Contract):
     category: str | None = None
     source_url_count: int | None = None
     related_observation_ids: list[str] = Field(default_factory=list)
+    version: str | None = None
+    member_versions: dict[str, str] = Field(default_factory=dict)

@@ -19,6 +19,7 @@ def main():
     parser.add_argument("--max-cost-usd", type=float, default=10)
     parser.add_argument("--model")
     parser.add_argument("--no-llm", action="store_true")
+    parser.add_argument("--retry-failed", action="store_true", help="Explicitly retry terminal semantic jobs within the cost ceiling")
     parser.add_argument("--organized", action="store_true")
     parser.add_argument("--entity")
     parser.add_argument("--category")
@@ -29,13 +30,21 @@ def main():
     parser.add_argument("--date-to")
     parser.add_argument("--period")
     args = parser.parse_args()
+    if (args.dry_run or args.pilot or args.incremental or args.no_llm or args.model or args.retry_failed) and args.command != "organize":
+        parser.error("Organization processing options require the organize command")
+    if args.dry_run and args.pilot:
+        parser.error("Choose --dry-run or --pilot")
+    if args.organized and args.command != "export":
+        parser.error("--organized requires export")
+    if args.view != "observed" and args.command != "items":
+        parser.error("--view requires items")
     # Read-only organization commands must not instantiate the collector Store,
     # execute DDL or load/requeue topic definitions.
     if args.command == "organize":
         from .core import dumps
         from .organize import organize
         options = {"dry_run": args.dry_run, "pilot": args.pilot, "maximum": args.max_cost_usd,
-                   "workers": args.workers or 2, "use_llm": not args.no_llm}
+                   "workers": args.workers or 2, "use_llm": not args.no_llm, "retry_failed": args.retry_failed}
         if args.model:
             options["model"] = args.model
         print(dumps(organize(topic=args.topic, **options))); return
