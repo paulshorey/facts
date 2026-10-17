@@ -50,13 +50,17 @@ def canonical_url(url):
     return urlunsplit((p.scheme.lower(), p.netloc.lower(), p.path or "/", urlencode(query), ""))
 
 
-def validate_public_url(url):
+def public_target(url):
     url = canonical_url(url)
     host = urlsplit(url).hostname
-    addresses = socket.getaddrinfo(host, urlsplit(url).port or 443, type=socket.SOCK_STREAM)
+    addresses = socket.getaddrinfo(host, urlsplit(url).port or (443 if urlsplit(url).scheme == "https" else 80), type=socket.SOCK_STREAM)
     if not addresses or any(not ipaddress.ip_address(a[4][0]).is_global for a in addresses):
         raise ValueError("Public-web capture rejects private/local network destinations")
-    return url
+    return url, addresses[0][4][0]
+
+
+def validate_public_url(url):
+    return public_target(url)[0]
 
 
 class ExtractedItem(BaseModel):
@@ -216,10 +220,16 @@ def search(store, topic="all", limit=0, workers=4):
 
 def retrieve(url):
     import trafilatura
-    with httpx.Client(timeout=25, headers={"User-Agent": UA}, follow_redirects=False) as client:
+    with httpx.Client(timeout=25, headers={"User-Agent": UA}, follow_redirects=False, trust_env=False,
+                      limits=httpx.Limits(max_keepalive_connections=0)) as client:
         for _ in range(6):
-            validate_public_url(url)
-            with client.stream("GET", url) as response:
+            url, address = public_target(url)
+            original = httpx.URL(url)
+            target = original.copy_with(host=address)
+            # Supported HTTPX extension keeps certificate verification bound to
+            # the source host while the socket connects only to its validated IP.
+            with client.stream("GET", target, headers={"Host": original.netloc.decode("ascii")},
+                               extensions={"sni_hostname": original.host}) as response:
                 if response.is_redirect:
                     url = urljoin(url, response.headers["location"])
                     continue
@@ -481,6 +491,9 @@ def import_packet(store, topic, path):
             payload=json.loads(store.db.execute('SELECT payload FROM items WHERE id=?',(iid,)).fetchone()[0]);payload['references'].extend(extra)
             store.db.execute('UPDATE items SET payload=? WHERE id=?',(dumps(payload),iid))
         structured_count+=1
+    for query in data.get("followup_queries", []):
+        if isinstance(query, str) and query.strip():
+            store.db.execute("INSERT OR IGNORE INTO followups VALUES (?,?,?)", (topic, query.strip(), artifact))
     store.db.commit()
     print(f"Imported {added} source observations and {structured_count} structured items from {path}")
 

@@ -145,3 +145,13 @@ git diff --check
 Tests cover replay-safe item imports, source reference preservation, null/zero/
 false values, full chunk coverage, local-network URL rejection, partial exports,
 truncated-input splitting, and incorrect spreadsheet dimension recovery.
+
+Collector review safeguards: public capture pins the validated IP for every redirect,
+retaining the original HTTP Host and TLS SNI and disabling environment proxy/netrc
+settings. Individual Treasury failures are recorded while later datasets continue.
+The OMB bootstrap manifest at `storage/bootstrap/isolated-web-preflight.omb-downloads.json`
+is optional: supply a JSON list of `{"url": "https://.../workbook.xlsx"}` entries
+for expanded OMB coverage. When absent, cataloged workbooks and CBO URLs still run,
+and a missing-manifest attempt makes the coverage limitation explicit. Bounded
+follow-up expansion advances past existing searches; packet follow-ups and remote
+record envelopes retain pending leads.

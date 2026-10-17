@@ -44,13 +44,17 @@ def follow_links(store, topic, limit=150):
 
 
 def expand_followups(store, topic, limit=15):
-    rows=store.db.execute('SELECT query,origin FROM followups WHERE topic=? ORDER BY rowid LIMIT ?', (topic,limit)).fetchall()
+    rows=store.db.execute('SELECT query,origin FROM followups WHERE topic=? ORDER BY rowid', (topic,)).fetchall()
+    prepared = 0
     for row in rows:
         payload={'family':'followup','objective':f'Collect concrete original sources, itemized examples and datasets for {topic}: {row[0]}. Evidence cutoff 2026-10-16.', 'search_queries':[row[0]]}
         qid=ident('search',topic,payload)
-        store.db.execute('INSERT OR IGNORE INTO searches(id,topic,family,payload) VALUES (?,?,?,?)',(qid,topic,'followup',dumps(payload)))
+        if prepared >= limit:
+            break
+        cursor = store.db.execute('INSERT OR IGNORE INTO searches(id,topic,family,payload) VALUES (?,?,?,?)',(qid,topic,'followup',dumps(payload)))
+        prepared += cursor.rowcount
     store.db.commit()
-    print(f'{topic}: prepared {len(rows)} follow-up searches')
+    print(f'{topic}: prepared {prepared} follow-up searches')
 
 
 if __name__ == '__main__':

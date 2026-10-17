@@ -3,7 +3,7 @@ import argparse
 import json
 import os
 
-from .core import Store, now
+from .core import Store, now, ident
 
 SCHEMA = """
 CREATE SCHEMA IF NOT EXISTS facts;
@@ -28,9 +28,11 @@ def records(store):
                 if key in value:
                     value[key]=json.loads(value[key])
             yield table, row['id'], value.get('topic') or (row['id'] if table=='topics' else None), value
+    for row in store.db.execute('SELECT * FROM followups'):
+        value = dict(row)
+        yield 'followups', ident('followup', value['topic'], value['query']), row['topic'], value
     for row in store.db.execute('SELECT * FROM topic_sources'):
         value=dict(row)
-        from .core import ident
         yield 'topic_sources',ident('membership',value),row['topic'],value
 
 
