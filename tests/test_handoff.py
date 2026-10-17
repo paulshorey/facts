@@ -79,6 +79,27 @@ def test_backup_failure_keeps_previous_manifest(corpus,tmp_path,monkeypatch):
     assert (bundle/'latest.json').read_bytes()==previous
 
 
+def test_backup_rejects_missing_retained_evidence_and_unsafe_bundle_locations(corpus,tmp_path):
+    for bundle in [corpus,corpus/'storage',corpus/'storage/objects',corpus.parent]:
+        with pytest.raises(ValueError): handoff.backup(corpus,bundle)
+    store=Store(corpus);sid=store.source('topic','https://example.com/report')
+    cid=store.capture(sid,'direct_http',b'missing evidence','text')
+    path=store.db.execute('SELECT artifact FROM captures WHERE id=?',(cid,)).fetchone()[0]
+    store.db.commit();store.db.close()
+    bundle=tmp_path/'bundle';sid=handoff.backup(corpus,bundle)['snapshot']
+    payload=handoff.load_manifest(bundle,sid)
+    payload['files']=[f for f in payload['files'] if f['path']!=path]
+    content=dumps(payload).encode();changed=hashlib.sha256(content).hexdigest()
+    DirectoryStore(bundle).path(handoff.manifest_key(changed)).write_bytes(content)
+    with pytest.raises(ValueError,match='omits catalog-referenced'):
+        handoff.verify(bundle,changed)
+    previous=(bundle/'latest.json').read_bytes()
+    (corpus/path).unlink()
+    with pytest.raises(ValueError,match='missing catalog-referenced'):
+        handoff.backup(corpus,bundle)
+    assert (bundle/'latest.json').read_bytes()==previous
+
+
 def test_manifest_rejects_sqlite_sidecars_and_traversal(corpus,tmp_path):
     bundle=tmp_path/'bundle'; sid=handoff.backup(corpus,bundle)['snapshot']
     payload=handoff.load_manifest(bundle,sid)

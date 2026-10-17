@@ -115,10 +115,12 @@ def sync_records(store, connection, *, artifact_manifest=None):
                         leaves.append(hashlib.sha256(dumps([kind, rid, topic, payload]).encode()).hexdigest())
                         count += 1
             connection.execute('ANALYZE facts_sync_stage')
-        connection.execute('''INSERT INTO facts.records (kind,id,topic,payload,synced_at)
+        written = connection.execute('''INSERT INTO facts.records AS existing (kind,id,topic,payload,synced_at)
             SELECT kind,id,topic,payload,synced_at FROM facts_sync_stage
             ON CONFLICT(kind,id) DO UPDATE SET payload=excluded.payload,
-                topic=excluded.topic,synced_at=excluded.synced_at''')
+                topic=excluded.topic,synced_at=excluded.synced_at
+            WHERE existing.payload IS DISTINCT FROM excluded.payload
+               OR existing.topic IS DISTINCT FROM excluded.topic''').rowcount
         deleted = connection.execute('''DELETE FROM facts.records AS existing
             WHERE existing.kind = ANY(%s::text[]) AND NOT EXISTS (
                 SELECT 1 FROM facts_sync_stage AS staged
@@ -132,7 +134,7 @@ def sync_records(store, connection, *, artifact_manifest=None):
             (receipt_id,digest,artifact_manifest,Jsonb(counts),Jsonb(kinds),synced_at))
         connection.execute('''INSERT INTO facts.mirror_state VALUES ('current',%s)
             ON CONFLICT(id) DO UPDATE SET receipt_id=excluded.receipt_id''', (receipt_id,))
-    return {'synced_records': count, 'deleted_records': deleted,
+    return {'synced_records': count, 'written_records': written, 'deleted_records': deleted,
             'synchronized_kinds': kinds, 'counts': counts, 'receipt_id': receipt_id,
             'catalog_digest': digest, 'artifact_manifest': artifact_manifest,
             'artifacts': 'manifest linked; verify its delivery receipt' if artifact_manifest else 'local; not uploaded'}

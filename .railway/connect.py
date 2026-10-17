@@ -30,7 +30,9 @@ def inspect_target():
         raise ValueError('Wrong Facts database service')
     volumes=[e['node'] for e in selected['volumeInstances']['edges'] if e['node']['serviceId']==target['databaseId']]
     if (len(volumes)!=1 or volumes[0]['volume']['id']!=target['volumeId']
-            or volumes[0]['mountPath']!='/var/lib/postgresql/data' or volumes[0]['isPendingDeletion']):
+            or volumes[0]['mountPath']!='/var/lib/postgresql/data' or volumes[0]['isPendingDeletion']
+            or volumes[0]['environmentId']!=target['environmentId']
+            or volumes[0]['deletedAt'] is not None or volumes[0]['state']!='READY'):
         raise ValueError('Facts database volume identity/attachment changed')
     info=call('bucket','info','--bucket',target['bucketId'],'--json')
     if info['id']!=target['bucketId'] or info['region']!=target['bucketRegion'] or info['environmentId']!=target['environmentId']:
@@ -49,7 +51,7 @@ def main():
     if any(not isinstance(v,str) or not v or '\n' in v or '\r' in v for v in values.values()):
         raise ValueError('Missing or malformed development connection')
     root=directory.parent
-    with tempfile.NamedTemporaryFile(mode='w',dir=root,delete=False) as stream:
+    with tempfile.NamedTemporaryFile(mode='w',dir=root,prefix='.env.facts-dev.',delete=False) as stream:
         temporary=Path(stream.name)
         try:
             stream.write(''.join(k+'='+json.dumps(v)+'\n' for k,v in values.items()))

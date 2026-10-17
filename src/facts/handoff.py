@@ -54,6 +54,31 @@ def catalog_fingerprint(database, tables=PRESERVED_TABLES):
     return result
 
 
+def catalog_artifacts(database):
+    """Paths promised by retained catalog rows, including historical versions."""
+    paths=set()
+    def collect(value,key=''):
+        if isinstance(value,dict):
+            for name,child in value.items(): collect(child,name)
+        elif isinstance(value,list):
+            for child in value: collect(child,key)
+        elif (isinstance(value,str) and value.startswith(('storage/','exports/'))
+                and (key.endswith(('_artifact','_artifacts')) or key in {'artifact','parquet'})):
+            paths.add(value)
+    tables=[r[0] for r in database.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")]
+    for table in tables:
+        # Quote SQLite catalog identifiers, including FTS's own shadow tables.
+        quoted='"'+table.replace('"','""')+'"'
+        columns=[r[1] for r in database.execute(f'PRAGMA table_info({quoted})')]
+        selected=[c for c in columns if c in {'payload','metadata','artifact','parquet'} or c.endswith('_artifact')]
+        if not selected: continue
+        for row in database.execute('SELECT '+','.join('"'+c.replace('"','""')+'"' for c in selected)+' FROM '+quoted):
+            for key,value in zip(selected,row):
+                if value is None: continue
+                collect(json.loads(value) if key in {'payload','metadata'} else value,key)
+    return paths
+
+
 def load_manifest(bundle, snapshot):
     path = DirectoryStore(bundle).path(manifest_key(snapshot))
     payload = json.loads(path.read_text())
@@ -87,6 +112,8 @@ def load_manifest(bundle, snapshot):
 
 def backup(root=ROOT, bundle=None):
     root = Path(root).resolve(); bundle = Path(bundle or root / 'storage/handoffs').resolve()
+    if root.is_relative_to(bundle) or (bundle.is_relative_to(root) and not bundle.is_relative_to(root/'storage/handoffs')):
+        raise ValueError('Use storage/handoffs inside the collector or a separate external bundle')
     store = DirectoryStore(bundle)
     with tempfile.TemporaryDirectory(prefix='.backup-', dir=bundle) as scratch:
         snapshot = Path(scratch) / 'catalog.sqlite'
@@ -96,6 +123,7 @@ def backup(root=ROOT, bundle=None):
             if target.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
                 raise ValueError('Catalog integrity check failed')
             original = catalog_fingerprint(target)
+            required_artifacts = catalog_artifacts(target)
         source.close(); target.close()
         entries = [('storage/catalog.sqlite', snapshot)]
         for folder in ['storage', 'exports', 'topics']:
@@ -121,6 +149,8 @@ def backup(root=ROOT, bundle=None):
             if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
                 raise ValueError('Source file changed during backup: ' + relative)
             files.append({'path': relative, 'sha256': digest, 'size': size})
+        if required_artifacts - {item['path'] for item in files}:
+            raise ValueError('Backup is missing catalog-referenced artifacts')
         payload = {'schema_version': VERSION, 'created_at': now(), 'files': files, 'original_tables': original}
         identity = hashlib.sha256(dumps(payload).encode()).hexdigest()
         candidate = Path(scratch) / 'manifest.json'; candidate.write_text(dumps(payload))
@@ -140,6 +170,8 @@ def verify(bundle, snapshot):
         if (database.execute('PRAGMA integrity_check').fetchone()[0] != 'ok'
                 or catalog_fingerprint(database, payload['original_tables']) != payload['original_tables']):
             raise ValueError('Restored catalog does not match its manifest')
+        if catalog_artifacts(database) - {item['path'] for item in payload['files']}:
+            raise ValueError('Handoff omits catalog-referenced artifacts')
     database.close()
     return {'snapshot': snapshot, 'verified_files': len(payload['files']), 'integrity': 'ok'}
 

@@ -188,6 +188,7 @@ def test_import_receipt_is_atomic_repeatable_and_tracks_current_mirror(tmp_path,
     first=postgres_sync.sync_records(store,postgres,artifact_manifest='fixture-manifest')
     second=postgres_sync.sync_records(store,postgres,artifact_manifest='fixture-manifest')
     assert first['receipt_id']==second['receipt_id']
+    assert first['written_records']==1 and second['written_records']==0
     assert postgres.execute('SELECT count(*) FROM facts.import_receipts').fetchone()[0]==1
     assert postgres.execute('SELECT receipt_id FROM facts.mirror_state').fetchone()[0]==first['receipt_id']
     saved=postgres.execute('SELECT counts FROM facts.import_receipts').fetchone()[0]
