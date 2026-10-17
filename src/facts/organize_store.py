@@ -128,7 +128,26 @@ class OrganizedStore:
         if mention.get("canonical_name"):
             keys = {key, name_key(mention["name"]), *[name_key(a) for a in mention.get("aliases", [])]}
             found = self.db.execute("SELECT DISTINCT entity_id FROM organized_aliases WHERE entity_type=? AND alias IN ("+",".join("?" for _ in keys)+") ORDER BY entity_id", (kind, *sorted(keys))).fetchall()
-        eid = found[0][0] if len(found) == 1 else ident("entity", key, kind)
+        eid = ident("entity", key, kind)
+        if mention.get("canonical_name"):
+            candidates = [(row[0], json.loads(self.db.execute("SELECT payload FROM organized_entities WHERE id=?", (row[0],)).fetchone()[0])) for row in found]
+            canonical_matches = [candidate_id for candidate_id, candidate in candidates if name_key(candidate["name"]) == key]
+            if len(canonical_matches) == 1:
+                eid = canonical_matches[0]
+            elif len(candidates) == 1:
+                candidate_id, candidate = candidates[0]
+                # Promote a still-provisional mention, but never overwrite a
+                # previously expanded identity merely through a shared acronym.
+                # Legacy evidence lacks the explicit flag: keep it conservative.
+                expanded = any(e.get("explicit_canonical_name", True) for e in candidate.get("alias_evidence", []))
+                if name_key(candidate["name"]) == name_key(mention["name"]) and not expanded:
+                    eid = candidate_id
+        elif len(found) == 1:
+            eid = found[0][0]
+        elif len(found) > 1:
+            # The original provisional ID may now belong to an expansion. An
+            # ambiguous bare acronym must not silently select that first entity.
+            eid = ident("entity-ambiguous", key, kind)
         aliases = set([mention["name"], canonical, *mention.get("aliases", [])])
         previous = self.db.execute("SELECT payload FROM organized_entities WHERE id=?", (eid,)).fetchone()
         payload = json.loads(previous[0]) if previous else {"schema_version": VERSION, "id": eid, "name": canonical, "entity_type": kind}
@@ -136,7 +155,7 @@ class OrganizedStore:
             payload["name"] = canonical
         payload["aliases"] = sorted(set(payload.get("aliases", [])).union(aliases))
         if mention.get("aliases") or mention.get("canonical_name"):
-            evidence = {"input_ids": list(input_ids), "input_path": mention.get("input_path"), "canonical_name": canonical, "aliases": sorted(aliases)}
+            evidence = {"input_ids": list(input_ids), "input_path": mention.get("input_path"), "canonical_name": canonical, "aliases": sorted(aliases), "explicit_canonical_name": bool(mention.get("canonical_name"))}
             existing = payload.setdefault("alias_evidence", [])
             if evidence not in existing:
                 existing.append(evidence)

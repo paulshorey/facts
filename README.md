@@ -251,3 +251,6 @@ token prices before submission; completed jobs retain historical settings. Expli
 acronym expansions reuse a unique supported entity ID. Exact occurrence grouping
 includes entity identity, including replay of older grouping edges. Export snapshot
 identity includes the exported entity and table payloads.
+Conflicting expansions of the same acronym retain separate canonical entities;
+later bare acronym mentions retain an ambiguous identity instead of selecting one
+of the organizations. Existing source records and observation links are preserved.
