@@ -1,0 +1,253 @@
+{
+  "schema_version": "topic.v1",
+  "slug": "trump-second-term",
+  "title": "Trump family and associates: trading, conflicts and financial activity",
+  "request": "Donald Trump's family and friends' insider trading, conflicts of interests, and corruption activity during his 2nd term.",
+  "date_from": "2025-01-20",
+  "date_to": "2026-10-16",
+  "languages": [
+    "en"
+  ],
+  "searches": [
+    {
+      "family": "overview",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for Trump family and associates: trading, conflicts and financial activity; lane overview. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Trump family second term corruption conflicts tracker 2025 2026",
+        "Trump administration family associates conflicts interest investigations timeline"
+      ]
+    },
+    {
+      "family": "tariff-trading",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for Trump family and associates: trading, conflicts and financial activity; lane tariff-trading. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Trump tariff pause April 2025 insider trading options good time buy",
+        "suspicious trades Trump policy announcements October 2026 Reuters"
+      ]
+    },
+    {
+      "family": "policy-trading",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for Trump family and associates: trading, conflicts and financial activity; lane policy-trading. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Reuters April 2026 trades ahead Trump policy moves",
+        "Trump tariff insider trading oil futures Iran announcement suspicious trading"
+      ]
+    },
+    {
+      "family": "world-liberty",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for Trump family and associates: trading, conflicts and financial activity; lane world-liberty. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "World Liberty Financial Trump family foreign investors investigation 2025 2026",
+        "World Liberty Financial Trump family revenue USD1 conflicts Reuters"
+      ]
+    },
+    {
+      "family": "uae-binance",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for Trump family and associates: trading, conflicts and financial activity; lane uae-binance. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "MGX Binance USD1 two billion Trump UAE investment conflicts",
+        "Trump World Liberty Abu Dhabi stake Sheikh Tahnoon chip deal 2026"
+      ]
+    },
+    {
+      "family": "justin-sun",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for Trump family and associates: trading, conflicts and financial activity; lane justin-sun. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Justin Sun Trump World Liberty SEC lawsuit settlement investment",
+        "Justin Sun Trump token dinner SEC investigation 2025 2026"
+      ]
+    },
+    {
+      "family": "memecoin",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for Trump family and associates: trading, conflicts and financial activity; lane memecoin. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Trump meme coin dinner buyers profits family investigation Reuters",
+        "TRUMP MELANIA memecoin wallets fees insider trading family 2025 2026"
+      ]
+    },
+    {
+      "family": "binance-pardon",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for Trump family and associates: trading, conflicts and financial activity; lane binance-pardon. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Changpeng Zhao pardon Trump Binance World Liberty conflicts 2025 2026",
+        "Binance Trump family crypto investment pardon Reuters investigation"
+      ]
+    },
+    {
+      "family": "american-bitcoin",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for Trump family and associates: trading, conflicts and financial activity; lane american-bitcoin. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Eric Trump Donald Trump Jr American Bitcoin Hut 8 investors",
+        "American Bitcoin Trump sons mining share deals 2026 conflicts"
+      ]
+    },
+    {
+      "family": "trump-media",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for Trump family and associates: trading, conflicts and financial activity; lane trump-media. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Trump Media DJT crypto bitcoin treasury foreign investors conflicts",
+        "Trump Media Truth Social merger deals 2025 2026 conflicts interest"
+      ]
+    },
+    {
+      "family": "kushner",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for Trump family and associates: trading, conflicts and financial activity; lane kushner. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Jared Kushner Affinity Partners Saudi Qatar UAE investment second term",
+        "Kushner Serbia Albania hotel Gaza investment conflicts 2025 2026"
+      ]
+    },
+    {
+      "family": "foreign-projects",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for Trump family and associates: trading, conflicts and financial activity; lane foreign-projects. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Trump Organization foreign real estate deals Vietnam Oman Qatar Dubai 2025 2026",
+        "Trump family projects Saudi Dar Global India licensing conflicts"
+      ]
+    },
+    {
+      "family": "qatar-plane",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for Trump family and associates: trading, conflicts and financial activity; lane qatar-plane. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Trump Qatar Boeing 747 gift cost conversion conflicts 2025 2026",
+        "Qatar Trump plane presidential library gift investigation"
+      ]
+    },
+    {
+      "family": "trump-mobile",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for Trump family and associates: trading, conflicts and financial activity; lane trump-mobile. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Trump Mobile phone family business investors promises 2025 2026",
+        "Trump Mobile launch T1 phone family conflicts investigation"
+      ]
+    },
+    {
+      "family": "don-jr-investments",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for Trump family and associates: trading, conflicts and financial activity; lane don-jr-investments. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Donald Trump Jr 1789 Capital investments defense government contracts",
+        "Donald Trump Jr Dominari PublicSquare Unusual Machines drones conflicts"
+      ]
+    },
+    {
+      "family": "lobbying-access",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for Trump family and associates: trading, conflicts and financial activity; lane lobbying-access. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Trump family paid access dinners membership Mar a Lago 2025 2026",
+        "Trump donors lobbying access fees presidential club 2026 investigation"
+      ]
+    },
+    {
+      "family": "property-payments",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for Trump family and associates: trading, conflicts and financial activity; lane property-payments. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Trump properties foreign government payments second term CREW",
+        "Trump golf trips taxpayers Secret Service hotel spending 2025 2026"
+      ]
+    },
+    {
+      "family": "musk-doge",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for Trump family and associates: trading, conflicts and financial activity; lane musk-doge. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Elon Musk DOGE SpaceX Starlink Tesla contracts conflicts 2025 2026",
+        "Musk government contracts regulatory conflicts Trump administration investigation"
+      ]
+    },
+    {
+      "family": "sacks",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for Trump family and associates: trading, conflicts and financial activity; lane sacks. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "David Sacks crypto czar holdings divestment ethics conflicts 2025 2026",
+        "Trump crypto reserve David Sacks investors conflicts interest"
+      ]
+    },
+    {
+      "family": "lutnick",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for Trump family and associates: trading, conflicts and financial activity; lane lutnick. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Howard Lutnick Cantor Fitzgerald tariffs conflicts family business",
+        "Lutnick Tether Cantor federal contract conflicts 2025 2026"
+      ]
+    },
+    {
+      "family": "pardons",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for Trump family and associates: trading, conflicts and financial activity; lane pardons. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Trump pardons donors fraud crypto corruption 2025 2026 investigation",
+        "Trump clemency lobbying payments family associates second term"
+      ]
+    },
+    {
+      "family": "enforcement",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for Trump family and associates: trading, conflicts and financial activity; lane enforcement. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Trump administration dropped corporate enforcement donors tracker Public Citizen",
+        "Trump DOJ SEC cases dropped crypto donors conflicts second term"
+      ]
+    },
+    {
+      "family": "financial-disclosures",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for Trump family and associates: trading, conflicts and financial activity; lane financial-disclosures. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Trump 2026 financial disclosure family income conflicts CREW",
+        "Trump 2025 2026 OGE financial disclosure business income"
+      ]
+    },
+    {
+      "family": "foreign-influence",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for Trump family and associates: trading, conflicts and financial activity; lane foreign-influence. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Trump family foreign gifts business deals emoluments second term tracker",
+        "Trump second term corruption tracker Senate Democrats report family wealth"
+      ]
+    },
+    {
+      "family": "procurement",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for Trump family and associates: trading, conflicts and financial activity; lane procurement. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Trump donor allies federal contracts second term conflicts investigation",
+        "Trump officials relatives friends government contracts nepotism 2025 2026"
+      ]
+    },
+    {
+      "family": "latest",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for Trump family and associates: trading, conflicts and financial activity; lane latest. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Trump family corruption conflicts insider trading October 2026",
+        "Trump family financial deals investigations September October 2026"
+      ]
+    },
+    {
+      "family": "jan-apr-2025",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for Trump family and associates: trading, conflicts and financial activity; lane jan-apr-2025. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Trump family corruption financial conflicts January February March April 2025",
+        "Trump family insider trading tariff April 9 2025 investigation"
+      ]
+    },
+    {
+      "family": "may-aug-2025",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for Trump family and associates: trading, conflicts and financial activity; lane may-aug-2025. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Trump family crypto deals corruption conflicts May June July August 2025",
+        "Trump foreign trip family deals 2025 Gulf conflicts"
+      ]
+    },
+    {
+      "family": "late-2025",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for Trump family and associates: trading, conflicts and financial activity; lane late-2025. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Trump family conflicts corruption September October November December 2025",
+        "Trump sons conflicts business 2025 year investigation"
+      ]
+    },
+    {
+      "family": "2026-cases",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for Trump family and associates: trading, conflicts and financial activity; lane 2026-cases. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Trump family corruption conflicts January February March April 2026",
+        "Trump family corruption conflicts May June July August 2026"
+      ]
+    }
+  ]
+}

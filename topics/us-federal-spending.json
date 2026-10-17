@@ -1,0 +1,253 @@
+{
+  "schema_version": "topic.v1",
+  "slug": "us-federal-spending",
+  "title": "US federal spending, line items and reported estimates",
+  "request": "US federal spending by category, listing all expenses estimated by leading journalists and economists.",
+  "date_from": null,
+  "date_to": "2026-10-16",
+  "languages": [
+    "en"
+  ],
+  "searches": [
+    {
+      "family": "overview",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for US federal spending, line items and reported estimates; lane overview. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "US federal spending breakdown categories fiscal 2025 2026 economists",
+        "US government spending every category line item budget dataset"
+      ]
+    },
+    {
+      "family": "treasury",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for US federal spending, line items and reported estimates; lane treasury. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Treasury monthly treasury statement September 2026 outlays categories",
+        "Fiscal Data MTS table 5 table 9 outlays functional classification"
+      ]
+    },
+    {
+      "family": "omb",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for US federal spending, line items and reported estimates; lane omb. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "OMB 2027 public budget database outlays fiscal 2025 2026 accounts",
+        "OMB historical tables 3.2 5.2 spending function subfunction 2027"
+      ]
+    },
+    {
+      "family": "cbo",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for US federal spending, line items and reported estimates; lane cbo. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "CBO 2026 spending projections budget account downloadable spreadsheet",
+        "CBO budget economic outlook 2026 2036 mandatory discretionary interest"
+      ]
+    },
+    {
+      "family": "usaspending",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for US federal spending, line items and reported estimates; lane usaspending. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "USAspending federal accounts program activity object class outlays data",
+        "USAspending agency spending fiscal 2025 2026 downloads"
+      ]
+    },
+    {
+      "family": "journalists",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for US federal spending, line items and reported estimates; lane journalists. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Reuters US federal spending 2025 2026 breakdown budget analysis",
+        "AP New York Times Washington Post federal spending categories 2025 2026"
+      ]
+    },
+    {
+      "family": "economists",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for US federal spending, line items and reported estimates; lane economists. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "economists federal spending breakdown 2025 2026 estimates",
+        "Brookings Peterson Institute federal spending budget 2026 categories"
+      ]
+    },
+    {
+      "family": "fiscal-watchdogs",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for US federal spending, line items and reported estimates; lane fiscal-watchdogs. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "CRFB federal spending budget 2026 breakdown",
+        "CBO Penn Wharton Budget Model federal spending 2026 analysis"
+      ]
+    },
+    {
+      "family": "social-security",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for US federal spending, line items and reported estimates; lane social-security. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Social Security federal spending actual outlays 2025 2026",
+        "CBO Social Security benefit spending estimates 2026"
+      ]
+    },
+    {
+      "family": "medicare",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for US federal spending, line items and reported estimates; lane medicare. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Medicare federal spending 2025 2026 CBO economists",
+        "Medicare expenditures trust fund annual report 2026"
+      ]
+    },
+    {
+      "family": "medicaid",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for US federal spending, line items and reported estimates; lane medicaid. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Medicaid federal spending 2025 2026 estimates KFF",
+        "KFF Medicaid budget reconciliation spending estimates 2026"
+      ]
+    },
+    {
+      "family": "defense",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for US federal spending, line items and reported estimates; lane defense. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "US defense military spending 2025 2026 category breakdown economists",
+        "Pentagon budget 2026 2027 procurement operations personnel costs"
+      ]
+    },
+    {
+      "family": "interest",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for US federal spending, line items and reported estimates; lane interest. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "US federal net interest spending 2025 2026 debt costs",
+        "CBO interest costs budget 2026 economists estimates"
+      ]
+    },
+    {
+      "family": "income-security",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for US federal spending, line items and reported estimates; lane income-security. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "federal income security spending SNAP SSI unemployment 2025 2026",
+        "US budget welfare benefits spending breakdown housing food assistance"
+      ]
+    },
+    {
+      "family": "health",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for US federal spending, line items and reported estimates; lane health. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "US federal health NIH CDC ACA subsidies spending 2025 2026",
+        "CBO health insurance subsidies spending estimate 2026"
+      ]
+    },
+    {
+      "family": "veterans",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for US federal spending, line items and reported estimates; lane veterans. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Veterans Affairs federal spending 2025 2026 benefits health budget",
+        "veterans budget outlays programs fiscal 2026"
+      ]
+    },
+    {
+      "family": "education",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for US federal spending, line items and reported estimates; lane education. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "federal education spending student loans Pell grants 2025 2026",
+        "CBO student loan costs federal budget estimates 2026"
+      ]
+    },
+    {
+      "family": "transport",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for US federal spending, line items and reported estimates; lane transport. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "US federal transportation infrastructure spending 2025 2026 categories",
+        "infrastructure law actual outlays budget 2026 transportation"
+      ]
+    },
+    {
+      "family": "energy-environment",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for US federal spending, line items and reported estimates; lane energy-environment. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "federal energy environment climate spending 2025 2026 estimates",
+        "CBO Inflation Reduction Act clean energy tax credits cost 2026"
+      ]
+    },
+    {
+      "family": "immigration",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for US federal spending, line items and reported estimates; lane immigration. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "immigration enforcement border ICE detention spending 2025 2026 estimates",
+        "CBO border funding 2025 reconciliation ICE costs journalists"
+      ]
+    },
+    {
+      "family": "foreign-aid",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for US federal spending, line items and reported estimates; lane foreign-aid. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "US foreign aid spending 2025 2026 USAID economists breakdown",
+        "foreign assistance actual spending military aid Israel Ukraine 2025 2026"
+      ]
+    },
+    {
+      "family": "agriculture",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for US federal spending, line items and reported estimates; lane agriculture. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "federal agriculture farm subsidies crop insurance spending 2025 2026",
+        "USDA budget outlays farm payments 2026"
+      ]
+    },
+    {
+      "family": "justice-government",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for US federal spending, line items and reported estimates; lane justice-government. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "federal justice courts prisons general government spending 2025 2026",
+        "federal budget NASA science commerce housing community development 2026"
+      ]
+    },
+    {
+      "family": "tax-expenditures",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for US federal spending, line items and reported estimates; lane tax-expenditures. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Treasury tax expenditures 2026 estimates by provision spreadsheet",
+        "JCT tax expenditures 2025 2029 estimates economists"
+      ]
+    },
+    {
+      "family": "doge",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for US federal spending, line items and reported estimates; lane doge. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "DOGE claimed savings actual federal spending estimates Reuters 2025 2026",
+        "economists DOGE cuts federal spending ProPublica analysis"
+      ]
+    },
+    {
+      "family": "waste-fraud",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for US federal spending, line items and reported estimates; lane waste-fraud. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "GAO improper payments fiscal 2025 2026 categories estimates",
+        "federal spending waste fraud estimates journalists economists audit"
+      ]
+    },
+    {
+      "family": "reconciliation",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for US federal spending, line items and reported estimates; lane reconciliation. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "CBO 2025 reconciliation law spending cost categories 2026",
+        "Penn Wharton Yale Budget Lab 2025 law spending estimates"
+      ]
+    },
+    {
+      "family": "taxpayer-costs",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for US federal spending, line items and reported estimates; lane taxpayer-costs. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Trump travel golf deportation detention costs taxpayers 2025 2026 estimates",
+        "US government special expenses Air Force One Qatar retrofit costs estimates"
+      ]
+    },
+    {
+      "family": "longterm",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for US federal spending, line items and reported estimates; lane longterm. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "CBO long term budget outlook 2026 spending projections health retirement",
+        "federal spending historical trends GDP categories economists chart"
+      ]
+    },
+    {
+      "family": "independent-databases",
+      "objective": "Collect as many concrete source pages, lists, reports, datasets and examples as possible for US federal spending, line items and reported estimates; lane independent-databases. Return original sources and investigations with dates, names and figures. Evidence cutoff 2026-10-16. Preserve allegations and estimates as reported.",
+      "search_queries": [
+        "Our World in Data US government spending categories",
+        "USAFacts federal spending 2025 2026 Peter G Peterson Foundation budget"
+      ]
+    }
+  ]
+}

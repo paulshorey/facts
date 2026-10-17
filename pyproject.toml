@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "facts-research"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["httpx", "pydantic", "trafilatura", "pymupdf", "duckdb", "pyarrow", "openpyxl", "feedparser", "psycopg[binary]", "parallel-web", "yt-dlp"]
+
+[project.scripts]
+facts = "facts.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
