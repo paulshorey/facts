@@ -13,6 +13,9 @@ python3.14 -m venv .venv
 .venv/bin/python -m pip install --no-deps -e .
 .venv/bin/facts init
 .venv/bin/facts status
+.venv/bin/facts items --topic trump-second-term --contains crypto --limit 10
+.venv/bin/facts items --topic us-federal-spending --kind statistic --limit 10
+.venv/bin/facts sources --topic us-federal-spending --limit 10
 ```
 
 `PARALLEL_API_KEY` enables Search/Extract. `FIREWORKS_API_KEY` enables item

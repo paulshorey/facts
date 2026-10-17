@@ -91,3 +91,25 @@ def test_truncated_chunk_splits_without_losing_parent_input(tmp_path):
     assert len(children)>1
     assert children[0]['start']==0 and children[-1]['end']==len(text)
     assert s.read(artifact)==text
+
+
+def test_structured_packet_keeps_missing_citations_and_source_kind(tmp_path):
+    s=Store(tmp_path)
+    p=tmp_path/'packet.json'
+    p.write_text(json.dumps({'items':[{'id':'external','kind':'proposal_estimate','title':'A reported estimate','amount':0,'unit':'USD'}]}))
+    import_packet(s,'topic',p);import_packet(s,'topic',p)
+    rows=s.db.execute('select payload from items').fetchall()
+    assert len(rows)==1
+    item=json.loads(rows[0][0])
+    assert item['references']==[] and item['data']['amount']==0
+    assert item['collection_metadata']['source_item_kind']=='proposal_estimate'
+    assert item['kind']=='fact'
+
+
+def test_structured_packet_links_every_supplied_url_and_reimports_safely(tmp_path):
+    s=Store(tmp_path);p=tmp_path/'packet.json'
+    p.write_text(json.dumps({'items':[{'id':'one','title':'A transaction','source_urls':['https://example.com/a','https://example.com/b']}]}))
+    import_packet(s,'topic',p);import_packet(s,'topic',p)
+    rows=s.db.execute('select payload from items').fetchall()
+    assert len(rows)==1
+    assert len(json.loads(rows[0][0])['references'])==2

@@ -111,7 +111,7 @@ def workbook(store, url, title=None):
                     continue
                 store.item(TOPIC, sid, cid, {"kind": "statistic", "title": f"{row.get('Agency Name')}: {row.get('Account Name')}",
                     "detail": f"Budget account row from {Path(url).name}; fiscal-year values and classification are preserved in the original source units.",
-                    "entities": [row.get("Agency Name")], "tags": ["omb", "budget-account", "outlays" if "outlays" in url else "budget-authority"],
+                    "entities": [row.get("Agency Name")], "tags": ["omb", "budget-account"] + (["outlays"] if 'outlays_' in url else ["budget-authority"] if 'budauth_' in url else []),
                     "data": {"dataset_id": did, "sheet": sheet.title, "year_values_source_units": yearly,
                              "classification": {k: row.get(k) for k in headers if not k.isdigit()}}},
                     {"type": "spreadsheet_row", "sheet": sheet.title, "row": row["source_row"]})

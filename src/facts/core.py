@@ -21,6 +21,12 @@ ROOT = Path(__file__).resolve().parents[2]
 PROMPT_VERSION = "items-v1"
 MODEL = os.getenv("FACTS_MODEL", "accounts/fireworks/models/glm-5p3-flash")
 UA = "facts-news-research/0.1 (+https://facts.news)"
+ITEM_KINDS = {'fact','example','event','statistic','headline','quote','document','dataset','resource'}
+KIND_ALIASES = {'figure':'statistic','report':'document','source':'resource','reference':'resource','appointment':'event'}
+
+
+def normalized_kind(kind):
+    return kind if kind in ITEM_KINDS else KIND_ALIASES.get(kind,'fact')
 
 
 def now():
@@ -154,14 +160,16 @@ class Store:
         self.db.execute("INSERT OR IGNORE INTO captures VALUES (?,?,?,?,?,?,?,?,?)", (cid, sid, level, artifact, text_artifact, status, state, now(), dumps(metadata or {})))
         return cid
 
-    def item(self, topic, sid, cid, value, origin):
+    def item(self, topic, sid, cid, value, origin, existing_id=None):
         item = dict(value)
-        iid = ident("item", topic, sid, cid, origin, item)
+        iid = existing_id or ident("item", topic, sid, cid, origin, item)
+        original_kind=item.get('kind','fact')
+        item['kind']=normalized_kind(original_kind)
         url = self.db.execute("SELECT url FROM sources WHERE id=?", (sid,)).fetchone()[0] if sid else None
         item.update({"id": iid, "schema_version": "item.v1", "topic": topic,
                      "references": [{"source_id": sid, "capture_id": cid, "url": url, "locator": origin}] if sid else [],
-                     "collection_metadata": {"extraction_context": origin}})
-        self.db.execute("INSERT OR IGNORE INTO items VALUES (?,?,?,?,?,?,?)", (iid, topic, sid, cid, item.get("kind", "fact"), dumps(item), now()))
+                     "collection_metadata": {"extraction_context": origin, "source_item_kind": original_kind}})
+        self.db.execute("INSERT INTO items VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET source=excluded.source,capture=excluded.capture,kind=excluded.kind,payload=excluded.payload", (iid, topic, sid, cid, item.get("kind", "fact"), dumps(item), now()))
         return iid
 
     def attempt(self, stage, target, outcome, artifact=None, metadata=None):
@@ -350,9 +358,19 @@ def llm_extract(chunk, topic, max_tokens=6500):
     body = {"model": MODEL, "messages": [{"role": "system", "content": EXTRACTION_PROMPT}, {"role": "user", "content": dumps({"topic": topic, "source_text": chunk})}], "temperature": 0, "max_tokens": max_tokens,
             "response_format": {"type": "json_schema", "json_schema": {"name": "Extraction", "schema": schema}}, "reasoning_effort": 256}
     with httpx.Client(timeout=150) as client:
-        response = client.post("https://api.fireworks.ai/inference/v1/chat/completions", headers={"Authorization": "Bearer " + os.environ["FIREWORKS_API_KEY"]}, json=body)
-        response.raise_for_status()
-        data = response.json()
+        request_history=[]
+        for attempt in range(3):
+            response = client.post("https://api.fireworks.ai/inference/v1/chat/completions", headers={"Authorization": "Bearer " + os.environ["FIREWORKS_API_KEY"]}, json=body)
+            request_history.append({'status':response.status_code,'at':now()})
+            if response.status_code in (429,502,503,504) and attempt<2:
+                try:delay=float(response.headers.get('retry-after',3*(2**attempt)))
+                except ValueError:delay=3*(2**attempt)
+                time.sleep(min(max(delay,1),30))
+                continue
+            response.raise_for_status()
+            data = response.json()
+            data['_collection_request_history']=request_history
+            break
     choice = data["choices"][0]
     if choice.get("finish_reason") == "length":
         return data, None, "output_truncated"
@@ -368,7 +386,7 @@ def normalize(store, topic="all", limit=100, workers=2):
     sql = "SELECT j.*,t.payload topic_payload,c.source FROM extraction_jobs j JOIN topics t ON t.id=j.topic JOIN captures c ON c.id=j.capture WHERE j.state IN ('queued','failed') AND j.attempts<2"
     if topic != "all":
         sql += " AND j.topic=?"
-    rows = store.db.execute(sql + " ORDER BY j.chunk,j.rowid LIMIT ?", ((limit,) if topic == "all" else (topic, limit))).fetchall()
+    rows = store.db.execute(sql + " ORDER BY CASE j.state WHEN 'failed' THEN 0 ELSE 1 END,j.chunk,j.rowid LIMIT ?", ((limit,) if topic == "all" else (topic, limit))).fetchall()
     with futures.ThreadPoolExecutor(max_workers=workers) as pool:
         pending = {pool.submit(llm_extract, store.read(row["text_artifact"]), {k: v for k, v in json.loads(row["topic_payload"]).items() if k != "searches"}): row for row in rows}
         for i, future in enumerate(futures.as_completed(pending), 1):
@@ -420,8 +438,51 @@ def import_packet(store, topic, path):
             added += 1
         except ValueError:
             continue
+    for entry in data.get('datasets',[]):
+        url=entry.get('download_url') or entry.get('url')
+        if isinstance(url,str) and url.startswith('http'):
+            store.source(topic,url,entry.get('title',''),family='dataset-lead')
+    structured_count=0
+    for entry in data.get('items',[]):
+        if not isinstance(entry,dict) or not entry.get('title'):
+            continue
+        urls=[u for u in entry.get('source_urls',[]) if isinstance(u,str)]
+        url=entry.get('citation_url') or entry.get('source_url') or entry.get('url') or (urls[0] if urls else None)
+        if not url and entry.get('source_id'):
+            source=next((r for r in sources if r.get('id')==entry['source_id']),None)
+            url=source.get('url') if source else None
+        sid=cid=None
+        if isinstance(url,str) and url.startswith('http'):
+            try:
+                sid=store.source(topic,url,family='structured-import')
+                cid=store.capture(sid,'provider_item',entry,entry.get('detail',''),{'packet_artifact':artifact})
+            except ValueError:
+                sid=None
+        value={'kind':entry.get('kind') or ('statistic' if any(k in entry for k in ['amount','value','figure']) else 'fact'),
+               'title':entry['title'],'detail':entry.get('detail') or entry.get('description') or '',
+               'tags':entry.get('tags') or [entry.get('category','structured-import')],
+               'entities':entry.get('entities',[]),
+               'data':entry}
+        if entry.get('amount') is not None:
+            value['measurements']=[{'metric':entry['title'],'value':str(entry['amount']),'unit':entry.get('unit'),'period':entry.get('fiscal_period'),'basis':entry.get('basis')}]
+        prior=store.db.execute("SELECT id FROM items WHERE topic=? AND json_extract(payload,'$.collection_metadata.extraction_context.artifact')=? AND json_extract(payload,'$.collection_metadata.extraction_context.external_id')=? LIMIT 1",(topic,artifact,entry['id'])).fetchone() if entry.get('id') else None
+        iid=store.item(topic,sid,cid,value,{'type':'structured_packet_item','artifact':artifact,'external_id':entry.get('id')},existing_id=prior[0] if prior else None)
+        extra=[]
+        for other_url in urls:
+            if other_url==url or not other_url.startswith('http'):
+                continue
+            try:
+                other_sid=store.source(topic,other_url,family='structured-import')
+                other_cid=store.capture(other_sid,'provider_item',entry,entry.get('detail',''),{'packet_artifact':artifact})
+                extra.append({'source_id':other_sid,'capture_id':other_cid,'url':canonical_url(other_url),'locator':{'type':'structured_packet_item','artifact':artifact}})
+            except ValueError:
+                continue
+        if extra:
+            payload=json.loads(store.db.execute('SELECT payload FROM items WHERE id=?',(iid,)).fetchone()[0]);payload['references'].extend(extra)
+            store.db.execute('UPDATE items SET payload=? WHERE id=?',(dumps(payload),iid))
+        structured_count+=1
     store.db.commit()
-    print(f"Imported {added} source observations from {path}")
+    print(f"Imported {added} source observations and {structured_count} structured items from {path}")
 
 
 def split_job(store, row):
@@ -458,6 +519,7 @@ def status(store):
             "captures": dict(store.db.execute("SELECT c.level,count(DISTINCT c.id) FROM captures c JOIN topic_sources t ON t.source=c.source WHERE t.topic=? GROUP BY c.level", (t,)).fetchall()),
             "extraction_jobs": dict(store.db.execute("SELECT state,count(*) FROM extraction_jobs WHERE topic=? GROUP BY state", (t,)).fetchall()),
             "datasets": store.db.execute("SELECT count(*) FROM datasets WHERE topic=?", (t,)).fetchone()[0],
+            "dataset_rows": sum(json.loads(r[0]).get('row_count',0) for r in store.db.execute('SELECT payload FROM datasets WHERE topic=?',(t,))),
             "followup_queries": store.db.execute("SELECT count(*) FROM followups WHERE topic=?", (t,)).fetchone()[0]}
     return report
 
@@ -493,3 +555,18 @@ def export(store, topic="all"):
     report_path.parent.mkdir(exist_ok=True)
     report_path.write_text(json.dumps(report, indent=2)+"\n")
     return report
+
+
+def normalize_catalog_kinds(store):
+    rows=store.db.execute('SELECT id,kind,payload FROM items').fetchall()
+    changed=0
+    for row in rows:
+        kind=normalized_kind(row['kind'])
+        if kind!=row['kind']:
+            payload=json.loads(row['payload']);payload['kind']=kind
+            payload.setdefault('collection_metadata',{})['source_item_kind']=row['kind']
+            store.db.execute('UPDATE items SET kind=?,payload=? WHERE id=?',(kind,dumps(payload),row['id']))
+            changed+=1
+        if changed and changed%200==0:store.db.commit()
+    store.db.commit()
+    print(f'Normalized {changed} item-kind aliases without dropping original labels.')
