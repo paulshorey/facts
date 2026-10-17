@@ -146,7 +146,14 @@ def run_jobs(store, topics, stage, budget, apply, workers=2, allowed_ids=None):
     queue = []
     for row in store.db.execute(f"SELECT * FROM organized_jobs WHERE stage=? AND topic IN ({placeholders}) AND state IN ('queued','failed_retryable') AND attempts<3 ORDER BY id", (stage, *topics)):
         if allowed_ids is None or row["id"] in allowed_ids:
-            queue.append(dict(row))
+            job = dict(row)
+            config = json.loads(job["settings"])
+            current = settings(stage, config["model"])
+            for key in ("input_usd_per_million", "output_usd_per_million", "pricing_basis"):
+                config[key] = current[key]
+            job["settings"] = dumps(config)
+            store.db.execute("UPDATE organized_jobs SET settings=? WHERE id=?", (job["settings"], job["id"]))
+            queue.append(job)
     with futures.ThreadPoolExecutor(max_workers=workers) as pool:
         pending = {}
         while queue or pending:

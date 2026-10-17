@@ -407,3 +407,18 @@ def test_exact_groups_do_not_combine_different_entities_or_reuse_bad_edges(tmp_p
     assert result["occurrence_groups"] == 2
     groups = [json.loads(r[0])["member_ids"] for r in o.db.execute("SELECT payload FROM organized_groups WHERE group_kind='occurrence'")]
     assert sorted(groups) == [["a", "c"], ["b"]]
+
+
+def test_interrupted_job_refreshes_prices_before_recovered_submission(tmp_path, monkeypatch):
+    o = OrganizedStore(tmp_path)
+    monkeypatch.setenv("FIREWORKS_API_KEY", "offline-placeholder")
+    monkeypatch.setenv("FACTS_ORGANIZE_INPUT_RATE", "0.15")
+    jid = enqueue(o, "topic", "grouping", {"entries": []}, "test")
+    o.db.execute("UPDATE organized_jobs SET state='running',attempts=1,reserved=0.001 WHERE id=?", (jid,)); o.db.commit()
+    monkeypatch.setenv("FACTS_ORGANIZE_INPUT_RATE", "1000")
+    monkeypatch.setattr("facts.organize_llm.request", lambda body: pytest.fail("Recovered job must not submit beyond current budget"))
+    result = run_jobs(o, ["topic"], "grouping", Budget(0.01), lambda *args: None)
+    row = o.db.execute("SELECT * FROM organized_jobs WHERE id=?", (jid,)).fetchone()
+    assert result["state"] == "budget_limited" and row["state"] == "failed_retryable"
+    assert json.loads(row["settings"])["input_usd_per_million"] == 1000
+    assert row["cost"] == 0.001 and row["reserved"] == 0
