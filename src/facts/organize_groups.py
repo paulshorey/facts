@@ -63,6 +63,12 @@ def apply_decisions(store, job, payload, parsed, artifact):
         store.db.execute("INSERT OR REPLACE INTO organized_relations VALUES (?,?,?,?,?,?)", (entry["id"], entry["version"], candidate["id"], candidate["version"], relation, dumps({"method": "structured_llm", "job_id": job["id"], "response_artifact": artifact, "applied_input_artifact": store.put(payload), "requested_relation": result.relation, "applied_relation": relation})))
 
 
+def exact_identity(value):
+    entities = sorted({e.get("entity_id") or name_key(e["name"]) for e in value.get("entities", [])})
+    return (value["topic"], name_key(value["title"]), name_key(value.get("detail", "")),
+            dumps(value.get("dates", [])), dumps(value.get("measurements", [])), tuple(entities))
+
+
 def build_groups(store, topics, inputs, budget, model, workers, use_llm):
     # Also safe when an older running organizer imports this stage after upgrade.
     store.db.execute("CREATE TABLE IF NOT EXISTS organized_group_history (id TEXT NOT NULL,version TEXT NOT NULL,topic TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(id,version))")
@@ -76,8 +82,7 @@ def build_groups(store, topics, inputs, budget, model, workers, use_llm):
     for iid, value in observations.items():
         # Identical descriptions can be grouped without asking the model to
         # rediscover an extraction duplicate; distinct source records remain.
-        key = (value["topic"], name_key(value["title"]), name_key(value.get("detail", "")),
-               dumps(value.get("dates", [])), dumps(value.get("measurements", [])))
+        key = exact_identity(value)
         if key in exact:
             target = observations[exact[key]]
             store.db.execute("INSERT OR IGNORE INTO organized_relations VALUES (?,?,?,?,?,?)", (iid, value["processing"]["version"], target["id"], target["processing"]["version"], "same_occurrence", dumps({"method": "identical_description"})))
@@ -167,7 +172,9 @@ def build_groups(store, topics, inputs, budget, model, workers, use_llm):
             # Match representatives too; do not let a chain of weak similarities
             # unite occurrences with incompatible dates/actions.
             exact_match = json.loads(row["payload"]).get("method") == "identical_description"
-            if ra != rb and (compatible(observations[ra], observations[rb]) or exact_match):
+            can_join = (exact_identity(observations[ra]) == exact_identity(observations[rb])
+                        if exact_match else compatible(observations[ra], observations[rb]))
+            if ra != rb and can_join:
                 roots[max(ra, rb)] = min(ra, rb)
         else:
             related.append((a, b))

@@ -355,3 +355,93 @@ def test_incompatible_group_match_remains_a_related_link(tmp_path):
     decisions=GroupBatch.model_validate({'results':[{'input_id':'a','candidate_id':'b','relation':'same_occurrence'}]})
     apply_decisions(o,{'id':'job'},{'entries':[a]},decisions,'artifact')
     assert o.db.execute('SELECT relation FROM organized_relations').fetchone()[0]=='related_subject'
+
+
+def test_queued_prices_refresh_but_completed_history_does_not(tmp_path, monkeypatch):
+    o = OrganizedStore(tmp_path)
+    payload = {"entries": []}
+    monkeypatch.setenv("FACTS_ORGANIZE_INPUT_RATE", "0.15")
+    jid = enqueue(o, "topic", "grouping", payload, "test")
+    monkeypatch.setenv("FACTS_ORGANIZE_INPUT_RATE", "150")
+    assert enqueue(o, "topic", "grouping", payload, "test") == jid
+    row = o.db.execute("SELECT * FROM organized_jobs WHERE id=?", (jid,)).fetchone()
+    assert json.loads(row["settings"])["input_usd_per_million"] == 150
+    o.db.execute("UPDATE organized_jobs SET state='succeeded' WHERE id=?", (jid,))
+    monkeypatch.setenv("FACTS_ORGANIZE_INPUT_RATE", "300")
+    enqueue(o, "topic", "grouping", payload, "test")
+    assert json.loads(o.db.execute("SELECT settings FROM organized_jobs WHERE id=?", (jid,)).fetchone()[0])["input_usd_per_million"] == 150
+
+
+def test_acronym_first_preserves_entity_and_existing_links(tmp_path):
+    o = OrganizedStore(tmp_path)
+    eid = o.entity({"name": "CBO", "entity_type": "organization"})
+    assert o.entity({"name": "CBO", "canonical_name": "Congressional Budget Office", "entity_type": "organization", "aliases": ["CBO"], "input_path": "/detail"}, ["later"]) == eid
+    assert o.entity({"name": "Congressional Budget Office", "entity_type": "organization"}) == eid
+    entity = json.loads(o.db.execute("SELECT payload FROM organized_entities WHERE id=?", (eid,)).fetchone()[0])
+    assert entity["name"] == "Congressional Budget Office"
+    assert entity["alias_evidence"][0]["input_ids"] == ["later"]
+
+
+@pytest.mark.parametrize("provisional_first", [False, True])
+def test_conflicting_acronym_expansions_keep_distinct_canonical_entities(tmp_path, provisional_first):
+    o = OrganizedStore(tmp_path); topic(o.original)
+    if provisional_first:
+        provisional = o.entity({"name": "ABC", "entity_type": "organization"})
+    first = {"name": "ABC", "canonical_name": "Alpha Beta Corp", "entity_type": "organization", "aliases": ["ABC"]}
+    second = {**first, "canonical_name": "American Broadcasting Company"}
+    saved = o.save_record(Observation(id="first", topic="topic", title="First report", input_ids=["first"], entities=[first]), "v1", "item:first")
+    first_id = saved["entities"][0]["entity_id"]
+    second_id = o.entity(second, ["second"])
+    if provisional_first:
+        assert first_id == provisional
+    assert first_id != second_id
+    assert json.loads(o.db.execute("SELECT payload FROM organized_entities WHERE id=?", (first_id,)).fetchone()[0])["name"] == first["canonical_name"]
+    assert o.entity(first) == first_id and o.entity(second) == second_id
+    assert {r[0] for r in o.db.execute("SELECT entity_id FROM organized_aliases WHERE alias='abc'")} == {first_id, second_id}
+    ambiguous = o.entity({"name": "ABC", "entity_type": "organization"})
+    assert ambiguous not in {first_id, second_id}
+    assert o.entity({"name": "ABC", "entity_type": "organization"}) == ambiguous
+    assert o.query("topic", entity=first_id)[0]["id"] == "first"
+    assert o.query("topic", entity=second_id) == []
+
+
+def test_entity_alias_change_creates_new_immutable_export(tmp_path):
+    from facts.organize_export import export_organized
+    o = OrganizedStore(tmp_path); topic(o.original)
+    record = Observation(id="a", topic="topic", title="A report", input_ids=["a"], entities=[{"name": "CBO", "entity_type": "organization"}])
+    o.save_record(record, "v1", "item:a"); o.db.commit()
+    first = export_organized(tmp_path)[0]
+    o.entity({"name": "CBO", "entity_type": "organization", "aliases": ["Budget office"], "input_path": "/detail"}, ["other-topic-input"]); o.db.commit()
+    second = export_organized(tmp_path)[0]
+    assert first["snapshot"] != second["snapshot"]
+    old = (tmp_path / first["path"] / "entities.jsonl").read_text()
+    new = (tmp_path / second["path"] / "entities.jsonl").read_text()
+    assert "Budget office" not in old and "Budget office" in new
+
+
+def test_exact_groups_do_not_combine_different_entities_or_reuse_bad_edges(tmp_path):
+    from facts.organize_groups import build_groups
+    o = OrganizedStore(tmp_path); topic(o.original)
+    for iid, entity in [("a", "Acme"), ("b", "Other Corp"), ("c", "Acme")]:
+        record = Observation(id=iid, topic="topic", title="Contract awarded", input_ids=[iid], detail="A contract was awarded.", entities=[{"name": entity, "entity_type": "organization"}])
+        o.save_record(record, "v1", "item:"+iid)
+    o.db.execute("INSERT INTO organized_relations VALUES (?,?,?,?,?,?)", ("b", "v1", "a", "v1", "same_occurrence", dumps({"method": "identical_description"})))
+    result = build_groups(o, ["topic"], [], Budget(0), "test", 1, False)
+    assert result["occurrence_groups"] == 2
+    groups = [json.loads(r[0])["member_ids"] for r in o.db.execute("SELECT payload FROM organized_groups WHERE group_kind='occurrence'")]
+    assert sorted(groups) == [["a", "c"], ["b"]]
+
+
+def test_interrupted_job_refreshes_prices_before_recovered_submission(tmp_path, monkeypatch):
+    o = OrganizedStore(tmp_path)
+    monkeypatch.setenv("FIREWORKS_API_KEY", "offline-placeholder")
+    monkeypatch.setenv("FACTS_ORGANIZE_INPUT_RATE", "0.15")
+    jid = enqueue(o, "topic", "grouping", {"entries": []}, "test")
+    o.db.execute("UPDATE organized_jobs SET state='running',attempts=1,reserved=0.001 WHERE id=?", (jid,)); o.db.commit()
+    monkeypatch.setenv("FACTS_ORGANIZE_INPUT_RATE", "1000")
+    monkeypatch.setattr("facts.organize_llm.request", lambda body: pytest.fail("Recovered job must not submit beyond current budget"))
+    result = run_jobs(o, ["topic"], "grouping", Budget(0.01), lambda *args: None)
+    row = o.db.execute("SELECT * FROM organized_jobs WHERE id=?", (jid,)).fetchone()
+    assert result["state"] == "budget_limited" and row["state"] == "failed_retryable"
+    assert json.loads(row["settings"])["input_usd_per_million"] == 1000
+    assert row["cost"] == 0.001 and row["reserved"] == 0

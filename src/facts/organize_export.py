@@ -40,7 +40,8 @@ def export_organized(root=ROOT, topic="all"):
                     "capture_text_artifact":capture.get("text_artifact")})
         groups = [json.loads(r[0]) for r in store.db.execute("SELECT payload FROM organized_groups WHERE topic=? ORDER BY id", (selected,))]
         tables = [json.loads(r[0]) for r in store.db.execute("SELECT payload FROM organized_tables WHERE topic=? ORDER BY id", (selected,))]
-        snapshot = ident("snapshot", EXPORT_VERSION, selected, [(r["id"], r["processing"]["version"]) for r in records], groups, inventory, source_index, capture_index)
+        entities = [json.loads(r[0]) for r in store.db.execute("SELECT DISTINCT e.payload FROM organized_entities e JOIN organized_links l ON l.target_id=e.id AND l.target_kind='entity' JOIN organized_records r ON r.id=l.record_id AND r.version=l.version AND r.active=1 WHERE r.topic=? ORDER BY e.id", (selected,))]
+        snapshot = ident("snapshot", EXPORT_VERSION, selected, [(r["id"], r["processing"]["version"]) for r in records], groups, inventory, source_index, capture_index, entities, tables)
         parent = store.root / "exports" / selected / "organized-v1"
         parent.mkdir(parents=True, exist_ok=True)
         final = parent / snapshot
@@ -70,8 +71,8 @@ def export_organized(root=ROOT, topic="all"):
                     for group in groups:
                         output.write(dumps(group)+"\n")
                 with (folder / "entities.jsonl").open("w") as output:
-                    for row in store.db.execute("SELECT DISTINCT e.payload FROM organized_entities e JOIN organized_links l ON l.target_id=e.id AND l.target_kind='entity' JOIN organized_records r ON r.id=l.record_id AND r.version=l.version AND r.active=1 WHERE r.topic=? ORDER BY e.id", (selected,)):
-                        output.write(row[0]+"\n")
+                    for entity in entities:
+                        output.write(dumps(entity)+"\n")
                 sources = [dict(r) for r in store.db.execute("SELECT DISTINCT s.* FROM sources s JOIN topic_sources t ON t.source=s.id WHERE t.topic=? ORDER BY s.id", (selected,))]
                 (folder / "sources.jsonl").write_text("".join(dumps(r)+"\n" for r in sources))
                 references = {}
