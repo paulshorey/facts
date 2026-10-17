@@ -81,8 +81,13 @@ CBO account-projection files, recording retrieval failures. Workbooks are retain
 in full; every sheet is represented in Parquet, including heading rows and original
 year columns. Published incorrect worksheet dimensions are recalculated.
 
-Treasury's explicit million-USD net-outlay fields are normalized into USD with
-the source expression retained. OMB generic cells and budget-account year values
+Treasury API amount fields are already USD; only the printed PDF scales them to
+millions. The importer now retains API dollars without multiplying them. Legacy
+`item.v1` Treasury observations from the initial collection contain a million-fold
+scaling error and legacy dataset manifests have the wrong unit label. Organization
+rebuilds those values from the saved raw rows, records `treasury-api-dollars-v1`,
+and preserves the original records. Use organized values for downstream work.
+OMB generic cells and budget-account year values
 remain in source units; no guessed conversion, actual/projection label, or total
 is applied. Budget authority, outlays, tax expenditures and different estimates
 remain separate observations. Account rows can overlap and include offsets; the
@@ -118,7 +123,102 @@ does not upload the original files or Parquet artifacts to cloud storage.
 Source headlines, search excerpts, source-specific extracted observations, and
 dataset rows are counted separately. Repeated source mentions and alternate
 descriptions are retained; item counts are not counts of unique events. Grouping,
-fact-checking, editing, and public website publication are later work.
+fact-checking, editing, and public website publication are later work. The
+organization layer below supplies reversible grouping without editing the sources.
+
+## Organize the existing corpus
+
+The approved specification is
+[`_working/content_normalization_plan.md`](_working/content_normalization_plan.md).
+The completed corpus results and recovery notes are in
+[`research/normalization_handoff.md`](research/normalization_handoff.md).
+Organization reads the saved items/tables and leaves source records, raw captures,
+and the extraction queue intact. It stores new versioned observations, entities,
+group memberships, jobs, mappings and coverage in the same local catalog. Financial
+values use decimal arithmetic; numeric table values are stored in typed Parquet.
+
+```bash
+# Truly read-only: no schema changes, jobs or provider calls.
+.venv/bin/facts organize --topic all --dry-run
+
+# 100 prose items stratified by topic/import origin, plus retained tables.
+.venv/bin/facts organize --topic all --pilot --max-cost-usd 10
+
+# Resume/process the current corpus. Unchanged successful inputs use caches.
+.venv/bin/facts organize --topic all --incremental --max-cost-usd 10
+
+# Deterministic adaptations/table mappings only, without provider calls.
+.venv/bin/facts organize --topic all --no-llm
+
+.venv/bin/facts items --topic trump-second-term --view organized --category world-liberty --limit 10
+.venv/bin/facts items --topic trump-second-term --view grouped --contains Powerus --limit 3
+.venv/bin/facts items --topic us-federal-spending --view organized --content-role table_observation --limit 5
+.venv/bin/facts series --topic us-federal-spending --basis net_outlays --limit 10
+.venv/bin/facts export --topic all --organized
+```
+
+`--entity`, `--category`, `--group`, `--kind`, `--basis`, `--content-role`,
+`--date-from` and `--date-to` filter organized records. Date filters use source
+event/reporting dates rather than publication dates. `series --period` matches
+the exact retained period label; values also include period bounds when known.
+Historical fiscal-year labels before 1977 retain their labels without silently
+using the modern October–September calendar.
+
+Code handles explicit field aliases, number scales, table transformations and
+source locators. The LLM assigns semantic categories/types, extracts entity roles
+and attribution, and suggests grouping among supplied candidates. It selects
+existing source text rather than writing new articles. Unknowns and unresolved
+layouts remain inspectable. Similar descriptions never replace source observations
+or choose a preferred figure. Source leads, comments, captions, table observations
+and substantive prose have separate `content_role` fields.
+
+Observations also retain `source_fields` for supplied structured fields that do
+not fit the shared model. Measurements keep `original_basis` beside the canonical
+financial basis. Entity aliases require supplied alternative names; the original
+names and their evidence remain accessible. Group definitions retain membership
+versions and history; cached match decisions can be applied to new processing
+versions when their semantic inputs are unchanged.
+
+`FIREWORKS_API_KEY` enables structured inference. `FACTS_MODEL` or `--model`
+selects the model. The default reuses GLM 5.3 Flash. Rates default to $0.15 input
+and $0.50 generated tokens per million, estimated standard prices as of
+2026-10-17; set `FACTS_ORGANIZE_INPUT_RATE` and `FACTS_ORGANIZE_OUTPUT_RATE` when
+changing model/rates. Price estimates count all generated/reasoning tokens and
+ignore caching discounts. A missing usage response is conservatively charged at
+the reserved request ceiling. These estimates are not a provider billing report.
+
+The $10 limit is per command invocation, including reserved in-flight capacity.
+Work stops at the ceiling with unfinished jobs retained. There are at most two
+provider requests in flight by default; `--workers 1` through `--workers 8`
+provide bounded overrides (the full-corpus run used eight after measuring latency).
+HTTP 401/403 stop submissions; Retry-After is persisted
+and respected. Truncated multi-item batches split, successful jobs remain cached,
+and invalid structured results get one validation retry. Interrupted submissions
+retain their conservative cost reservation and may be retried; exactly-once
+provider billing is not promised. Local per-topic file locks prevent overlapping
+organization commands, including `all` versus a specific topic.
+
+Partial valid batches keep their successful observations and create single-input
+repair jobs only for omitted/malformed results. A terminal failure leaves a
+`semantic_unresolved` record with the original fields and response pointers.
+Ordinary reruns do not pay to retry unchanged terminal inputs; use
+`organize --retry-failed` explicitly after inspecting/fixing the cause.
+
+New private artifacts live in `storage/organized/` (requests/responses also use
+the existing content-addressed objects). The first execution saves
+`storage/backups/catalog-before-organization.sqlite`. Organized exports live in
+`exports/<topic>/organized-v1/<snapshot>/`; `latest.json` identifies the current
+immutable snapshot and `inventory.md` is a convenient preview. JSONL files include
+observations, source entries, entities, groups, sources, references, dataset
+manifests, series definitions and input coverage. Copied value/row-coverage
+Parquet files use paths relative to the snapshot, while private original artifact
+references remain collector-root-relative provenance pointers. Original source
+bytes are not bundled. Manifests disclose unresolved mappings, queued extraction
+work and estimated usage. They do not assert completeness or additive totals.
+
+The normalization contracts are in `src/facts/contracts.py`; the observation JSON
+schema is included in organized exports. Grouping and mapping relations are
+versioned, and stale relations are ignored after their observations change.
 
 ## PostgreSQL handoff
 
@@ -145,3 +245,12 @@ git diff --check
 Tests cover replay-safe item imports, source reference preservation, null/zero/
 false values, full chunk coverage, local-network URL rejection, partial exports,
 truncated-input splitting, and incorrect spreadsheet dimension recovery.
+
+Organization review safeguards: retryable/queued inference jobs refresh configured
+token prices before submission; completed jobs retain historical settings. Explicit
+acronym expansions reuse a unique supported entity ID. Exact occurrence grouping
+includes entity identity, including replay of older grouping edges. Export snapshot
+identity includes the exported entity and table payloads.
+Conflicting expansions of the same acronym retain separate canonical entities;
+later bare acronym mentions retain an ambiguous identity instead of selecting one
+of the organizations. Existing source records and observation links are preserved.

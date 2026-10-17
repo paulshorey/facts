@@ -32,11 +32,29 @@ def records(store):
         value=dict(row)
         from .core import ident
         yield 'topic_sources',ident('membership',value),row['topic'],value
+    # Organization is optional and may not have run on a fresh collector.
+    tables = ['organized_records','organized_entities','organized_aliases','organized_groups','organized_group_history',
+              'organized_memberships','organized_relations','organized_links','organized_coverage',
+              'organized_jobs','organized_runs','organized_tables','organized_mappings']
+    for table in tables:
+        if not store.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone():
+            continue
+        keys = [r['name'] for r in sorted(store.db.execute(f'PRAGMA table_info({table})'), key=lambda r:r['pk']) if r['pk']]
+        for row in store.db.execute(f'SELECT * FROM {table}'):
+            value=dict(row)
+            for key in ['payload','settings','usage','record_ids']:
+                if isinstance(value.get(key),str):
+                    value[key]=json.loads(value[key])
+            # Composite IDs preserve prior record versions and relation history.
+            rid = value['id'] if keys==['id'] else ident(table, *[value[k] for k in keys])
+            yield table,rid,value.get('topic'),value
 
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('--apply',action='store_true');args=p.parse_args()
-    s=Store()
+    from .organize_store import OrganizedStore
+    # Reading counts should not initialize tables or alter collection state.
+    s=Store() if args.apply else OrganizedStore(readonly=True)
     if not args.apply:
         counts={}
         for kind,_,_,_ in records(s):counts[kind]=counts.get(kind,0)+1
