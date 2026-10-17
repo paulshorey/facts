@@ -500,3 +500,62 @@ def test_interrupted_job_refreshes_prices_before_recovered_submission(tmp_path, 
     assert result["state"] == "budget_limited" and row["state"] == "failed_retryable"
     assert json.loads(row["settings"])["input_usd_per_million"] == 1000
     assert row["cost"] == 0.001 and row["reserved"] == 0
+
+@pytest.mark.parametrize("expression, comparator", [
+    ("no more than $5 million", "at_most"),
+    ("not more than $5 million", "at_most"),
+    ("not less than $5 million", "at_least"),
+    ("no less than $5 million", "at_least"),
+    ("not over $5 million", "at_most"),
+    ("not under $5 million", "at_least"),
+    ("<= $5 million", "at_most"), (">= $5 million", "at_least"),
+    ("at most $5 million", "at_most"), ("at least $5 million", "at_least"),
+    ("less than $5 million", "less_than"), ("more than $5 million", "greater_than"),
+])
+def test_amount_bounds_keep_negation_and_inclusion(expression, comparator):
+    result = measurement(expression)
+    assert result.comparator == comparator
+    assert Decimal(result.value) == 5000000
+    assert result.original_expression == expression
+
+
+def test_supplied_iso_date_range_survives_adapter_and_filtering(tmp_path):
+    from facts.organize import temporal_context
+    store = Store(tmp_path); topic(store)
+    original = item(store, dates=[{"role": "event", "start": "2025-01-01", "end": "2025-03-31"}])
+    saved = dumps(original)
+    observed = adapt_item(original)
+    d = observed.dates[0]
+    assert (d.start, d.end, d.precision, d.calendar) == ("2025-01-01", "2025-03-31", "range", "calendar")
+    assert d.input_path == "/dates/0" and d.original_expression == "2025-01-01–2025-03-31"
+    assert temporal_context(observed, {"date_from": None, "date_to": "2024-12-31"}) == "after_period"
+    assert dumps(original) == saved
+    for expression in ["2025-02-31–2025-03-31", "2025-03-31–2025-01-01"]:
+        assert parse_date(expression).start is None
+
+
+@pytest.mark.parametrize("lower, upper, expression, expected", [
+    (None, "2026-10-16", "2026-10-17", "after_period"),
+    (None, "2026-10-16", "2025-01-01", "in_period"),
+    ("2025-01-20", None, "2025-01-19", "before_period"),
+    ("2025-01-20", None, "2026-10-17", "in_period"),
+    (None, None, "2025-01-01", "unknown"),
+])
+def test_topic_windows_allow_one_unbounded_side(lower, upper, expression, expected):
+    from facts.organize import temporal_context
+    observed = Observation(id="one", topic="topic", title="Event", input_ids=["input"], dates=[parse_date(expression, "event")])
+    assert temporal_context(observed, {"date_from": lower, "date_to": upper}) == expected
+
+
+def test_observation_adapter_upgrade_recomputes_then_caches(tmp_path, monkeypatch):
+    from facts.organize import adapt_all
+    store = Store(tmp_path); topic(store)
+    item(store, measurements=[{"value": "5", "unit": "USD", "original_expression": "no more than $5"}])
+    organized = OrganizedStore(tmp_path)
+    with monkeypatch.context() as old:
+        old.setattr("facts.organize.ADAPTER_VERSION", "observations-v5")
+        assert adapt_all(organized, ["topic"])["adapted"] == 1
+    assert adapt_all(organized, ["topic"])["adapted"] == 1
+    assert adapt_all(organized, ["topic"])["cached"] == 1
+    assert organized.db.execute("SELECT count(*) FROM organized_records").fetchone()[0] == 2
+    assert organized.db.execute("SELECT count(*) FROM organized_records WHERE active=1").fetchone()[0] == 1

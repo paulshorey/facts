@@ -283,3 +283,12 @@ identity includes the exported entity and table payloads.
 Conflicting expansions of the same acronym retain separate canonical entities;
 later bare acronym mentions retain an ambiguous identity instead of selecting one
 of the organizations. Existing source records and observation links are preserved.
+
+### Observation bounds and linked-source limits
+
+The observations-v6 adapter preserves full ISO date ranges, evaluates topic windows
+with either bound absent, and handles negated amount comparisons before positive
+substrings. A subsequent organization pass versions corrected observations while
+retaining original items and cached model responses. No saved corpus is rewritten
+by installing the code. Link discovery counts newly associated topic sources
+against its limit even when the URL is already cataloged for another topic.

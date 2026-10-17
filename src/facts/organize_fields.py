@@ -113,10 +113,19 @@ def measurement(expression, *, unit=None, value=None, metric="unspecified", peri
         _, scale = unit_scale(combined)
     approx = bool(re.search(r"about|around|approximately|nearly|roughly|estimated|~", original, re.I))
     comparator = "approximate" if approx else "equal"
-    if re.search(r"at least|minimum|no less than|\bmore than\b|\bover\b|>", original, re.I):
-        comparator = "greater_than" if re.search(r"more than|\bover\b|(?<![=])>(?!=)", original, re.I) else "at_least"
-    if re.search(r"at most|up to|less than|under|<", original, re.I):
-        comparator = "less_than" if re.search(r"less than|under|(?<![=])<(?!=)", original, re.I) else "at_most"
+    # Negation must win before the shorter positive comparison it contains.
+    if re.search(r"\b(?:no|not) more than\b|\bnot over\b|<=|≤", original, re.I):
+        comparator = "at_most"
+    elif re.search(r"\b(?:no|not) less than\b|\bnot under\b|>=|≥", original, re.I):
+        comparator = "at_least"
+    elif re.search(r"at most|up to", original, re.I):
+        comparator = "at_most"
+    elif re.search(r"at least|minimum", original, re.I):
+        comparator = "at_least"
+    elif re.search(r"\bless than\b|\bunder\b|<", original, re.I):
+        comparator = "less_than"
+    elif re.search(r"\bmore than\b|\bover\b|>", original, re.I):
+        comparator = "greater_than"
     parsed = decimal_text(value)
     low = high = None
     numbers = re.findall(r"(?<![\w.])-?\d[\d,]*(?:\.\d+)?", original)
@@ -169,6 +178,15 @@ def parse_date(expression, role="unknown", input_path=""):
             if fiscal and a < 1977:
                 return result.model_copy(update={"precision": "range", "calendar": "fiscal"})
             return result.model_copy(update={"start": f"{a-1 if fiscal else a}-{'10-01' if fiscal else '01-01'}", "end": f"{b}-{'09-30' if fiscal else '12-31'}", "precision": "range", "calendar": "fiscal" if fiscal else "unknown"})
+    iso_range = re.fullmatch(r"(\d{4}-\d{2}-\d{2})\s*(?:to|[-–—])\s*(\d{4}-\d{2}-\d{2})", text, re.I)
+    if iso_range:
+        try:
+            start, end = (date.fromisoformat(bound).isoformat() for bound in iso_range.groups())
+            if start <= end:
+                return result.model_copy(update={"start": start, "end": end, "precision": "range", "calendar": "calendar"})
+        except ValueError:
+            pass
+        return result
     iso = re.fullmatch(r"(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?", text)
     if iso:
         y, m, d = (int(x) if x else None for x in iso.groups())
