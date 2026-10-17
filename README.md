@@ -1,0 +1,294 @@
+# facts.news research collection
+
+A local-first collector for itemized research. The current campaigns cover Trump
+family/associate financial activity during the second term and US federal
+spending categories, expense rows, and attributed estimates. The original design
+is in [`_working/initial_research_framework.md`](_working/initial_research_framework.md).
+
+## Start
+
+```bash
+python3.14 -m venv .venv
+.venv/bin/python -m pip install -r requirements.lock.txt
+.venv/bin/python -m pip install --no-deps -e .
+.venv/bin/facts init
+.venv/bin/facts status
+.venv/bin/facts items --topic trump-second-term --contains crypto --limit 10
+.venv/bin/facts items --topic us-federal-spending --kind statistic --limit 10
+.venv/bin/facts sources --topic us-federal-spending --limit 10
+```
+
+`PARALLEL_API_KEY` enables Search/Extract. `FIREWORKS_API_KEY` enables item
+extraction. Read them from the process environment; do not commit credentials or
+pass them on command lines. `FACTS_MODEL` optionally overrides the pinned default
+in `src/facts/core.py`. Captured source content is data, not agent instructions.
+
+Dependencies are project-local. The environment includes Parallel's official
+CLI/SDK, Trafilatura, PyMuPDF, DuckDB, PyArrow, openpyxl, feedparser, yt-dlp,
+Pydantic, HTTPX, psycopg and pytest. The lockfile records the installed versions.
+The global last30days and Parallel deep-research skills remain independently
+maintained in `~/.agents/skills`.
+
+## Collect and continue
+
+Topic definitions contain the original requests, date scope, and concrete search
+families. All commands save incremental results. Rerun a command to continue its
+pending work; do not delete storage to restart a campaign.
+
+```bash
+.venv/bin/facts search --topic trump-second-term
+.venv/bin/facts search --topic us-federal-spending
+.venv/bin/facts capture --topic trump-second-term --limit 200 --workers 6
+.venv/bin/facts capture --topic us-federal-spending --limit 200 --workers 6
+.venv/bin/facts fallback --topic trump-second-term --limit 100
+.venv/bin/facts fallback --topic us-federal-spending --limit 100
+.venv/bin/facts normalize --topic trump-second-term --limit 100 --workers 2
+.venv/bin/facts normalize --topic us-federal-spending --limit 100 --workers 2
+.venv/bin/facts repair-truncated
+.venv/bin/facts export
+```
+
+`capture` targets source URLs without a recorded direct capture. HTTP error
+responses are retained; `fallback` uses Parallel Extract for sources without a
+successful readable capture. An excerpt remains usable when full retrieval fails.
+`normalize` queues every chunk of the best available capture and processes a
+bounded batch. Truncated outputs split into smaller tasks; all original input
+and failed output artifacts remain available. `repair-truncated` also splits
+older failed attempts. Topic definition changes create new extraction contexts.
+
+The SQLite catalog is an interim local store while the development PostgreSQL
+database is being provisioned. Run only one process per stage/topic; a distributed
+worker/lease system is not implemented. SQLite WAL permits different collection
+stages to write incremental batches, but it does not provide distributed task
+ownership. Do not run an `all` pass concurrently with another pass of the same
+stage. Stage commands intentionally finish a finite batch; no recurring schedule
+or always-on daemon is installed.
+
+## Bulk datasets and source expansion
+
+```bash
+.venv/bin/python -m facts.datasets --all-omb
+.venv/bin/python -m facts.discovery links --topic trump-second-term --limit 100
+.venv/bin/python -m facts.discovery links --topic us-federal-spending --limit 100
+.venv/bin/python -m facts.discovery followups --topic trump-second-term --limit 15
+.venv/bin/python -m facts.discovery followups --topic us-federal-spending --limit 15
+```
+
+The dataset command currently consumes the OMB download manifest saved by this
+campaign's bootstrap discovery. It captures the available XLSX workbooks and
+Treasury September snapshots for FY2024–FY2026. It also attempts the two configured
+CBO account-projection files, recording retrieval failures. Workbooks are retained
+in full; every sheet is represented in Parquet, including heading rows and original
+year columns. Published incorrect worksheet dimensions are recalculated.
+
+Treasury API amount fields are already USD; only the printed PDF scales them to
+millions. The importer now retains API dollars without multiplying them. Legacy
+`item.v1` Treasury observations from the initial collection contain a million-fold
+scaling error and legacy dataset manifests have the wrong unit label. Organization
+rebuilds those values from the saved raw rows, records `treasury-api-dollars-v1`,
+and preserves the original records. Use organized values for downstream work.
+OMB generic cells and budget-account year values
+remain in source units; no guessed conversion, actual/projection label, or total
+is applied. Budget authority, outlays, tax expenditures and different estimates
+remain separate observations. Account rows can overlap and include offsets; the
+collector does not add them into a grand total.
+
+`discovery links` adds relevant linked documents to the frontier. `discovery
+followups` promotes a bounded set of extracted research leads into saved search
+tasks. Search and capture commands then process the expanded frontier.
+
+## Storage and exports
+
+Everything large or source-derived is ignored by Git:
+
+- `storage/catalog.sqlite`: source index, topic membership, captures, items,
+  extraction tasks, dataset manifests, usage and attempt history.
+- `storage/objects/<prefix>/<digest>`: original response bytes, provider JSON,
+  cleaned text, chunks and model responses, stored by SHA-256.
+- `storage/tables/*.parquet`: captured spreadsheet/API rows, preserving source
+  column names or raw cell positions and worksheet row numbers.
+- `storage/bootstrap/`: original discovery searches, source seeds, source endpoint
+  probes, official download manifest and supplemental searches.
+- `storage/last30days/`: raw JSON and engine logs for each topic.
+- `storage/deep-research/`: asynchronous task objectives, returned IDs, status and
+  retrieved outputs. Resume a saved task; never submit a duplicate to check status.
+- `exports/<topic>/`: `items.jsonl`, `sources.jsonl`, `datasets.jsonl`, `manifest.json`
+  and `inventory.md`.
+
+`research/collection_status.json` is a small tracked handoff snapshot generated by
+export. It is historical, not live task state. `facts status` reads current state.
+Back up the entire `storage/` directory and exports together. PostgreSQL sync
+does not upload the original files or Parquet artifacts to cloud storage.
+
+Source headlines, search excerpts, source-specific extracted observations, and
+dataset rows are counted separately. Repeated source mentions and alternate
+descriptions are retained; item counts are not counts of unique events. Grouping,
+fact-checking, editing, and public website publication are later work. The
+organization layer below supplies reversible grouping without editing the sources.
+
+## Organize the existing corpus
+
+The approved specification is
+[`_working/content_normalization_plan.md`](_working/content_normalization_plan.md).
+The completed corpus results and recovery notes are in
+[`research/normalization_handoff.md`](research/normalization_handoff.md).
+Organization reads the saved items/tables and leaves source records, raw captures,
+and the extraction queue intact. It stores new versioned observations, entities,
+group memberships, jobs, mappings and coverage in the same local catalog. Financial
+values use decimal arithmetic; numeric table values are stored in typed Parquet.
+
+```bash
+# Truly read-only: no schema changes, jobs or provider calls.
+.venv/bin/facts organize --topic all --dry-run
+
+# 100 prose items stratified by topic/import origin, plus retained tables.
+.venv/bin/facts organize --topic all --pilot --max-cost-usd 10
+
+# Resume/process the current corpus. Unchanged successful inputs use caches.
+.venv/bin/facts organize --topic all --incremental --max-cost-usd 10
+
+# Deterministic adaptations/table mappings only, without provider calls.
+.venv/bin/facts organize --topic all --no-llm
+
+.venv/bin/facts items --topic trump-second-term --view organized --category world-liberty --limit 10
+.venv/bin/facts items --topic trump-second-term --view grouped --contains Powerus --limit 3
+.venv/bin/facts items --topic us-federal-spending --view organized --content-role table_observation --limit 5
+.venv/bin/facts series --topic us-federal-spending --basis net_outlays --limit 10
+.venv/bin/facts export --topic all --organized
+```
+
+`--entity`, `--category`, `--group`, `--kind`, `--basis`, `--content-role`,
+`--date-from` and `--date-to` filter organized records. Date filters use source
+event/reporting dates rather than publication dates. `series --period` matches
+the exact retained period label; values also include period bounds when known.
+Historical fiscal-year labels before 1977 retain their labels without silently
+using the modern October–September calendar.
+Explicit `FY` prefixes in table period labels also select the fiscal calendar,
+independently of the workbook filename. Long-format series retain account/category
+labels in their title and dimensions so different labeled rows remain separate
+across reporting periods. Repeated headings retain distinct source columns rather
+than overwriting a dimension. The `tables-v4` mapper invalidates older cached table
+outputs; the next organization pass rebuilds derived versions from retained rows.
+
+Code handles explicit field aliases, number scales, table transformations and
+source locators. The LLM assigns semantic categories/types, extracts entity roles
+and attribution, and suggests grouping among supplied candidates. It selects
+existing source text rather than writing new articles. Unknowns and unresolved
+layouts remain inspectable. Similar descriptions never replace source observations
+or choose a preferred figure. Source leads, comments, captions, table observations
+and substantive prose have separate `content_role` fields.
+
+Observations also retain `source_fields` for supplied structured fields that do
+not fit the shared model. Measurements keep `original_basis` beside the canonical
+financial basis. Entity aliases require supplied alternative names; the original
+names and their evidence remain accessible. Group definitions retain membership
+versions and history; cached match decisions can be applied to new processing
+versions when their semantic inputs are unchanged.
+
+`FIREWORKS_API_KEY` enables structured inference. `FACTS_MODEL` or `--model`
+selects the model. The default reuses GLM 5.3 Flash. Rates default to $0.15 input
+and $0.50 generated tokens per million, estimated standard prices as of
+2026-10-17; set `FACTS_ORGANIZE_INPUT_RATE` and `FACTS_ORGANIZE_OUTPUT_RATE` when
+changing model/rates. Price estimates count all generated/reasoning tokens and
+ignore caching discounts. A missing usage response is conservatively charged at
+the reserved request ceiling. These estimates are not a provider billing report.
+
+The $10 limit is per command invocation, including reserved in-flight capacity.
+Work stops at the ceiling with unfinished jobs retained. There are at most two
+provider requests in flight by default; `--workers 1` through `--workers 8`
+provide bounded overrides (the full-corpus run used eight after measuring latency).
+HTTP 401/403 stop submissions; Retry-After is persisted
+and respected. Truncated multi-item batches split, successful jobs remain cached,
+and invalid structured results get one validation retry. Interrupted submissions
+retain their conservative cost reservation and may be retried; exactly-once
+provider billing is not promised. Local per-topic file locks prevent overlapping
+organization commands, including `all` versus a specific topic.
+
+Partial valid batches keep their successful observations and create single-input
+repair jobs only for omitted/malformed results. A terminal failure leaves a
+`semantic_unresolved` record with the original fields and response pointers.
+Ordinary reruns do not pay to retry unchanged terminal inputs; use
+`organize --retry-failed` explicitly after inspecting/fixing the cause.
+
+New private artifacts live in `storage/organized/` (requests/responses also use
+the existing content-addressed objects). The first execution saves
+`storage/backups/catalog-before-organization.sqlite`. Organized exports live in
+`exports/<topic>/organized-v1/<snapshot>/`; `latest.json` identifies the current
+immutable snapshot and `inventory.md` is a convenient preview. JSONL files include
+observations, source entries, entities, groups, sources, references, dataset
+manifests, series definitions and input coverage. Copied value/row-coverage
+Parquet files use paths relative to the snapshot, while private original artifact
+references remain collector-root-relative provenance pointers. Original source
+bytes are not bundled. Manifests disclose unresolved mappings, queued extraction
+work and estimated usage. They do not assert completeness or additive totals.
+
+The normalization contracts are in `src/facts/contracts.py`; the observation JSON
+schema is included in organized exports. Grouping and mapping relations are
+versioned, and stale relations are ignored after their observations change.
+
+## PostgreSQL handoff
+
+```bash
+.venv/bin/python -m facts.postgres_sync
+# After providing the development URL as FACTS_DATABASE_URL:
+.venv/bin/python -m facts.postgres_sync --apply
+```
+
+The first command reports local record counts and the kinds an apply would
+reconcile; it does not connect to PostgreSQL. `--apply` creates the `facts` schema
+and mirrors versioned record envelopes into `facts.records`, with topic, kind and
+JSONB indexes. One complete local catalog is authoritative for the synchronized
+kinds in that PostgreSQL target. It stages one consistent SQLite snapshot using
+COPY, upserts current envelopes and deletes remote IDs absent locally in one
+transaction. Present but empty kinds are cleared; optional organization kinds
+missing from an older local schema and unknown remote kinds remain untouched.
+Historical versions still present locally remain in the mirror. Mirror writers
+serialize; ordinary readers can continue reading the previous committed snapshot.
+Failure rolls back the entire apply, including its deletions. Other database
+schemas are left alone. This is an interim portable import contract, not a
+production application database design. The development target remains unverified
+until an actual development URL is supplied.
+
+## Checks
+
+```bash
+.venv/bin/pytest -q
+.venv/bin/python -m compileall -q src
+git diff --check
+```
+
+Tests cover replay-safe item imports, source reference preservation, null/zero/
+false values, full chunk coverage, local-network URL rejection, partial exports,
+truncated-input splitting, and incorrect spreadsheet dimension recovery.
+PostgreSQL reconciliation tests start and stop an isolated temporary cluster over
+a Unix socket when local `initdb`/`pg_ctl` are available for a non-root user.
+Otherwise those integration tests skip explicitly. They never use
+`FACTS_DATABASE_URL` or an existing PostgreSQL service.
+
+Collector review safeguards: public capture pins the validated IP for every redirect,
+retaining the original HTTP Host and TLS SNI and disabling environment proxy/netrc
+settings. Individual Treasury failures are recorded while later datasets continue.
+The OMB bootstrap manifest at `storage/bootstrap/isolated-web-preflight.omb-downloads.json`
+is optional: supply a JSON list of `{"url": "https://.../workbook.xlsx"}` entries
+for expanded OMB coverage. When absent, cataloged workbooks and CBO URLs still run,
+and a missing-manifest attempt makes the coverage limitation explicit. Bounded
+follow-up expansion advances past existing searches; packet follow-ups and remote
+record envelopes retain pending leads.
+
+Organization review safeguards: retryable/queued inference jobs refresh configured
+token prices before submission; completed jobs retain historical settings. Explicit
+acronym expansions reuse a unique supported entity ID. Exact occurrence grouping
+includes entity identity, including replay of older grouping edges. Export snapshot
+identity includes the exported entity and table payloads.
+Conflicting expansions of the same acronym retain separate canonical entities;
+later bare acronym mentions retain an ambiguous identity instead of selecting one
+of the organizations. Existing source records and observation links are preserved.
+
+### Observation bounds and linked-source limits
+
+The observations-v6 adapter preserves full ISO date ranges, evaluates topic windows
+with either bound absent, and handles negated amount comparisons before positive
+substrings. A subsequent organization pass versions corrected observations while
+retaining original items and cached model responses. No saved corpus is rewritten
+by installing the code. Link discovery counts newly associated topic sources
+against its limit even when the URL is already cataloged for another topic.
