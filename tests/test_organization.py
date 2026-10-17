@@ -382,6 +382,29 @@ def test_acronym_first_preserves_entity_and_existing_links(tmp_path):
     assert entity["alias_evidence"][0]["input_ids"] == ["later"]
 
 
+@pytest.mark.parametrize("provisional_first", [False, True])
+def test_conflicting_acronym_expansions_keep_distinct_canonical_entities(tmp_path, provisional_first):
+    o = OrganizedStore(tmp_path); topic(o.original)
+    if provisional_first:
+        provisional = o.entity({"name": "ABC", "entity_type": "organization"})
+    first = {"name": "ABC", "canonical_name": "Alpha Beta Corp", "entity_type": "organization", "aliases": ["ABC"]}
+    second = {**first, "canonical_name": "American Broadcasting Company"}
+    saved = o.save_record(Observation(id="first", topic="topic", title="First report", input_ids=["first"], entities=[first]), "v1", "item:first")
+    first_id = saved["entities"][0]["entity_id"]
+    second_id = o.entity(second, ["second"])
+    if provisional_first:
+        assert first_id == provisional
+    assert first_id != second_id
+    assert json.loads(o.db.execute("SELECT payload FROM organized_entities WHERE id=?", (first_id,)).fetchone()[0])["name"] == first["canonical_name"]
+    assert o.entity(first) == first_id and o.entity(second) == second_id
+    assert {r[0] for r in o.db.execute("SELECT entity_id FROM organized_aliases WHERE alias='abc'")} == {first_id, second_id}
+    ambiguous = o.entity({"name": "ABC", "entity_type": "organization"})
+    assert ambiguous not in {first_id, second_id}
+    assert o.entity({"name": "ABC", "entity_type": "organization"}) == ambiguous
+    assert o.query("topic", entity=first_id)[0]["id"] == "first"
+    assert o.query("topic", entity=second_id) == []
+
+
 def test_entity_alias_change_creates_new_immutable_export(tmp_path):
     from facts.organize_export import export_organized
     o = OrganizedStore(tmp_path); topic(o.original)
