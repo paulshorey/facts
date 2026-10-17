@@ -16,7 +16,7 @@ from .organize_llm import Budget, enqueue, run_jobs, settings
 from .organize_store import OrganizedStore, name_key
 from .organize_tables import infer_mapping, mapping_input, normalize_table, raw_rows, repair_mapping, validate_mapping
 
-ADAPTER_VERSION = "observations-v5"
+ADAPTER_VERSION = "observations-v6"
 
 
 def input_digest(item):
@@ -108,9 +108,9 @@ def locate_support(store, original, observation):
 
 def temporal_context(observation, definition):
     dates = [d for d in observation.dates if d.start and d.role not in {"publication", "report", "acquisition", "reporting_period", "unknown"}]
-    if not dates or not definition.get("date_from"):
+    if not dates or not (definition.get("date_from") or definition.get("date_to")):
         return "unknown"
-    lower, upper = definition["date_from"], definition.get("date_to", "9999-12-31")
+    lower, upper = definition.get("date_from") or "0001-01-01", definition.get("date_to") or "9999-12-31"
     labels = {"before_period" if d.end < lower else "after_period" if d.start > upper else "in_period" for d in dates}
     return next(iter(labels)) if len(labels) == 1 else "mixed"
 

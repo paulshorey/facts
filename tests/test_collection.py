@@ -201,3 +201,22 @@ def test_missing_omb_manifest_records_partial_coverage_and_continues_cbo(tmp_pat
     run(s, all_omb=True)
     assert len(calls) == 2 and all("cbo.gov" in u for u in calls)
     assert s.db.execute("SELECT outcome FROM attempts WHERE stage='dataset_manifest'").fetchone()[0] == "missing"
+
+
+def test_link_limit_counts_new_topic_memberships_for_existing_urls(tmp_path, capsys):
+    from facts.discovery import follow_links
+    s = Store(tmp_path)
+    parent = s.source('topic', 'https://example.com/index', 'Index')
+    links = []
+    for i in range(4):
+        url = f'https://www.gao.gov/report-{i}'
+        s.source('other-topic', url, f'Previously cataloged report {i}')
+        links.append(f'<a href="{url}">Previously cataloged report {i}</a>')
+    s.capture(parent, 'direct_http', ''.join(links).encode(), 'Index', {'format': 'html'})
+    s.db.commit()
+    follow_links(s, 'topic', limit=2)
+    assert s.db.execute("SELECT count(*) FROM topic_sources WHERE topic='topic'").fetchone()[0] == 3
+    assert 'queued 2 new linked sources' in capsys.readouterr().out
+    follow_links(s, 'topic', limit=1)
+    assert s.db.execute("SELECT count(*) FROM topic_sources WHERE topic='topic'").fetchone()[0] == 4
+    assert s.db.execute("SELECT count(*) FROM attempts WHERE stage='discover_link'").fetchone()[0] == 3

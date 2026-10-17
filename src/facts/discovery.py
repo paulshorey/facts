@@ -32,7 +32,7 @@ def follow_links(store, topic, limit=150):
                 continue
             try:
                 canonical = canonical_url(url)
-                exists = store.db.execute('SELECT 1 FROM sources WHERE url=?',(canonical,)).fetchone()
+                exists = store.db.execute('SELECT 1 FROM topic_sources t JOIN sources s ON s.id=t.source WHERE t.topic=? AND s.url=?', (topic,canonical)).fetchone()
                 sid = store.source(topic,canonical,title,family='linked-document')
                 if not exists:
                     store.attempt('discover_link',sid,'succeeded',metadata={'parent_source':row['id'],'anchor':title})
