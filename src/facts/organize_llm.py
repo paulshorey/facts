@@ -104,13 +104,14 @@ def retry_delay(header, attempt):
 
 
 class Budget:
-    def __init__(self, maximum):
+    def __init__(self, maximum, *, cached_only=False):
         if not math.isfinite(maximum) or maximum < 0:
             raise ValueError("Cost ceiling must be nonnegative and finite")
         self.maximum, self.spent, self.inflight = maximum, 0.0, 0.0
         self.stopped = False
         self.authentication_failed = False
         self.provider_ready_at = 0
+        self.cached_only = cached_only
 
     def reserve(self, value):
         if self.spent+self.inflight+value > self.maximum:
@@ -125,6 +126,8 @@ class Budget:
 
 
 def run_jobs(store, topics, stage, budget, apply, workers=2, allowed_ids=None):
+    if budget.cached_only:
+        return {"stage": stage, "state": "cached_only", "processed": 0}
     if not os.getenv("FIREWORKS_API_KEY"):
         return {"stage": stage, "state": "missing_credentials", "processed": 0}
     if budget.authentication_failed:

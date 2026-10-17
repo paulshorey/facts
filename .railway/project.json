@@ -1,0 +1,12 @@
+{
+  "projectId": "f463753e-8db6-4d2b-b8d1-127e9ab5d59d",
+  "workspaceId": "c64d0999-e00c-4c52-bbd4-2614210e3758",
+  "environmentId": "bd4378a5-dd88-44c3-957f-57877e8ca905",
+  "environment": "dev",
+  "databaseName": "Postgres",
+  "bucketName": "facts-evidence",
+  "bucketRegion": "iad",
+  "bucketId": "396a3208-321c-4881-bac5-f75c6e9cf6a0",
+  "databaseId": "40a20cf2-77ee-4f76-a146-637c3dd51282",
+  "volumeId": "bbf30891-7551-43e8-8575-ed48b2341de4"
+}

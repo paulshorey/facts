@@ -246,8 +246,109 @@ Historical versions still present locally remain in the mirror. Mirror writers
 serialize; ordinary readers can continue reading the previous committed snapshot.
 Failure rolls back the entire apply, including its deletions. Other database
 schemas are left alone. This is an interim portable import contract, not a
-production application database design. The development target remains unverified
-until an actual development URL is supplied.
+production application database design. Every successful import also commits a
+content-addressed receipt in `facts.import_receipts`; `facts.mirror_state` points
+to the receipt describing the current mirror. Identical logical content and
+artifact-manifest identity reuse the same receipt. The local delivery receipt is
+written only after the PostgreSQL commit. A lost local receipt is safe to recover
+by repeating the import. A failed receipt insert rolls back the mirror too.
+Local receipts are scoped by the non-secret database host/port/name under
+`storage/deliveries/postgres/<target-id>/`, so identical imports to different
+databases cannot overwrite each other's local delivery records.
+
+The dedicated Facts development resources and secure connection setup are
+documented in [.railway/README.md](.railway/README.md). Read-only infrastructure
+verification, SQL/TLS connectivity and actual corpus delivery are distinct checks.
+
+## Cached refresh and portable recovery
+
+```bash
+.venv/bin/facts-handoff backup
+# Save the returned snapshot digest before starting the refresh.
+.venv/bin/facts organize --cached-only
+.venv/bin/python -m facts.audit --current --output /tmp/facts-audit.json
+.venv/bin/facts export --organized
+.venv/bin/facts-handoff backup
+```
+
+`--cached-only` keeps deterministic normalization and replays saved semantic,
+mapping and grouping output. It prohibits provider submissions before credential
+checks or job recovery, costs zero new inference, and leaves pending work visible.
+It differs from `--no-llm`, which skips semantic/grouping cache replay. It cannot
+be combined with `--retry-failed` or `--no-llm`. Original items, source captures,
+extraction jobs, provider task IDs and prior record versions remain retained.
+
+`facts.audit` checks SQLite integrity, observation/series contracts, current
+normalizer versions, referenced sources/captures/files, Parquet value/series links
+and dataset row dispositions. It fingerprints all original catalog tables and
+active derived contents for before/after and repeatability comparisons. It checks
+structure and lineage; its output does not assert factual accuracy or completeness.
+
+Portable bundles default to `storage/handoffs/`. SQLite's backup API creates a
+consistent catalog snapshot; files are copied into a deduplicated object pool.
+The manifest records original relative paths, SHA-256, byte sizes and original
+table fingerprints. Prior backup directories, locks, live SQLite companions,
+hidden files and credentials are excluded. Run while collection/export stages are
+idle: changing files fail verification instead of producing a completed manifest.
+The bundle includes raw captures, source packets, model outputs, provider task IDs,
+derived Parquet/JSONL, topic definitions and exports. A blog export alone is not
+a full research backup. Code/dependencies and credentials are restored separately.
+
+```bash
+# Replace this placeholder with the digest printed by backup.
+facts_snapshot='<snapshot-sha256>'
+.venv/bin/facts-handoff verify --snapshot "$facts_snapshot"
+.venv/bin/facts-handoff restore --snapshot "$facts_snapshot" \
+  --destination /tmp/facts-restored
+
+# .env.facts-dev is written by .railway/connect.py; values never appear in Git.
+.venv/bin/python -m dotenv -f .env.facts-dev run --override -- \
+  .venv/bin/facts-handoff deliver --snapshot "$facts_snapshot" --workers 8
+
+# Fetch into an independent bundle, then restore into a new root.
+.venv/bin/python -m dotenv -f .env.facts-dev run --override -- \
+  .venv/bin/facts-handoff receive --snapshot "$facts_snapshot" \
+  --bundle /tmp/facts-received --workers 8
+.venv/bin/facts-handoff restore --snapshot "$facts_snapshot" \
+  --bundle /tmp/facts-received --destination /tmp/facts-remote-restored
+.venv/bin/python -m facts.audit --root /tmp/facts-remote-restored --current
+```
+
+Delivery/retrieval use one to thirty-two bounded threads (default eight). Existing objects are read and
+verified, never blindly overwritten. New S3 objects use `If-None-Match: *`, then
+are downloaded and hashed. The manifest is delivered last, and the local receipt
+appears under `storage/handoffs/receipts/<snapshot>/<destination-hash>.json` only
+after all objects and the remote manifest verify. Interrupted work can resume with
+the same snapshot; incomplete retrieval has no completed `latest.json`. Restore
+verifies all bytes before atomically publishing a new destination and refuses to
+overwrite an existing root. `--remote-directory /other/disk/facts` provides the
+same delivery protocol for an independent filesystem backup.
+
+The S3 client requires `FACTS_S3_ENDPOINT`, `FACTS_S3_BUCKET`,
+`FACTS_S3_ACCESS_KEY_ID`, `FACTS_S3_SECRET_ACCESS_KEY`; optional `FACTS_S3_REGION`
+and `FACTS_S3_PREFIX` default to `auto` and `facts-v1`. Manifests contain no
+credentials. The bucket must honor conditional object creation. This is client
+immutability, not provider-enforced object lock; keep an independent copy.
+
+Link a PostgreSQL import to the exact delivered artifact snapshot by importing
+from a restored root and supplying its verified delivery receipt:
+
+```bash
+.venv/bin/python -m dotenv -f .env.facts-dev run --override -- \
+  .venv/bin/python -m facts.postgres_sync --apply \
+  --root /tmp/facts-remote-restored --bundle storage/handoffs \
+  --snapshot "$facts_snapshot" \
+  --artifact-receipt 'storage/handoffs/receipts/<snapshot>/<destination-hash>.json'
+```
+
+The command rejects a catalog whose bytes differ from the bundle snapshot.
+Remote SQL receipts include the logical catalog digest, synchronized kinds,
+per-kind counts and artifact-manifest ID. The current mirror may later advance;
+the immutable artifact snapshot remains the recovery source for earlier receipts.
+Database outages and failed uploads leave the original catalog, last successful
+receipt and pending extraction work intact; retry delivery without recrawling or
+resubmitting research/model jobs. PostgreSQL remains a development mirror of the
+complete catalog, with its documented deletion semantics.
 
 ## Checks
 

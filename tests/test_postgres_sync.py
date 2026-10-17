@@ -181,3 +181,62 @@ def test_sync_dry_run_reports_empty_scope_without_writes(tmp_path):
     assert report["records"]["topics"] == 1 and report["records"]["followups"] == 0
     assert "followups" in report["synchronized_kinds"] and "organized_groups" not in report["synchronized_kinds"]
     assert path.read_bytes() == before and not reader.db.in_transaction
+
+
+def test_import_receipt_is_atomic_repeatable_and_tracks_current_mirror(tmp_path,postgres,monkeypatch):
+    store=Store(tmp_path);add_topic(store)
+    first=postgres_sync.sync_records(store,postgres,artifact_manifest='fixture-manifest')
+    second=postgres_sync.sync_records(store,postgres,artifact_manifest='fixture-manifest')
+    assert first['receipt_id']==second['receipt_id']
+    assert postgres.execute('SELECT count(*) FROM facts.import_receipts').fetchone()[0]==1
+    assert postgres.execute('SELECT receipt_id FROM facts.mirror_state').fetchone()[0]==first['receipt_id']
+    saved=postgres.execute('SELECT counts FROM facts.import_receipts').fetchone()[0]
+    assert saved==first['counts']
+    store.db.execute("UPDATE topics SET payload='{}'");store.db.commit()
+    postgres.execute("""CREATE FUNCTION reject_receipt() RETURNS trigger LANGUAGE plpgsql AS
+        $$ BEGIN RAISE EXCEPTION 'receipt blocked'; END $$;
+        CREATE TRIGGER reject_receipt BEFORE INSERT ON facts.import_receipts
+        FOR EACH ROW EXECUTE FUNCTION reject_receipt()""")
+    with pytest.raises(psycopg.errors.RaiseException):
+        postgres_sync.sync_records(store,postgres,artifact_manifest='fixture-manifest')
+    assert postgres.execute("SELECT payload->'payload'->>'title' FROM facts.records WHERE kind='topics'").fetchone()[0]=='before'
+    assert postgres.execute('SELECT receipt_id FROM facts.mirror_state').fetchone()[0]==first['receipt_id']
+    assert postgres.execute('SELECT count(*) FROM facts.import_receipts').fetchone()[0]==1
+
+
+def test_lost_local_receipt_retries_without_duplicate_remote_receipt(tmp_path,postgres,monkeypatch):
+    from facts import handoff
+    store=Store(tmp_path);add_topic(store);store.db.close()
+    monkeypatch.setenv('FACTS_DATABASE_URL',postgres.info.dsn)
+    monkeypatch.setattr('sys.argv',['facts.postgres_sync','--apply','--root',str(tmp_path)])
+    original=handoff.journal
+    def disk_failure(*args): raise OSError('simulated local interruption after commit')
+    monkeypatch.setattr(handoff,'journal',disk_failure)
+    with pytest.raises(SystemExit,match='OSError'): postgres_sync.main()
+    assert postgres.execute('SELECT count(*) FROM facts.import_receipts').fetchone()[0]==1
+    assert not (tmp_path/'storage/deliveries').exists()
+    monkeypatch.setattr(handoff,'journal',original)
+    postgres_sync.main()
+    assert postgres.execute('SELECT count(*) FROM facts.import_receipts').fetchone()[0]==1
+    assert len(list((tmp_path/'storage/deliveries/postgres').rglob('*.json')))==1
+
+
+def test_database_disconnect_keeps_previous_mirror_and_can_retry(tmp_path,postgres,monkeypatch):
+    store=Store(tmp_path);add_topic(store)
+    first=postgres_sync.sync_records(store,postgres)
+    store.db.execute("UPDATE topics SET payload='{}'");store.db.commit()
+    original=postgres_sync.records
+    with psycopg.connect(postgres.info.dsn,autocommit=True) as writer:
+        def interrupted(s):
+            for index,row in enumerate(original(s)):
+                if index==0:
+                    postgres.execute('SELECT pg_terminate_backend(%s)',(writer.info.backend_pid,))
+                yield row
+        monkeypatch.setattr(postgres_sync,'records',interrupted)
+        with pytest.raises(psycopg.OperationalError): postgres_sync.sync_records(store,writer)
+    assert not store.db.in_transaction
+    assert postgres.execute('SELECT receipt_id FROM facts.mirror_state').fetchone()[0]==first['receipt_id']
+    assert postgres.execute("SELECT payload->'payload'->>'title' FROM facts.records WHERE kind='topics'").fetchone()[0]=='before'
+    monkeypatch.setattr(postgres_sync,'records',original)
+    second=postgres_sync.sync_records(store,postgres)
+    assert second['receipt_id']!=first['receipt_id']

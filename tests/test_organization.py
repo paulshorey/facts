@@ -85,6 +85,12 @@ def test_treasury_table_values_and_hierarchy(tmp_path):
     series = json.loads(o.db.execute("SELECT payload FROM organized_records WHERE record_type='series'").fetchone()[0])
     assert series["hierarchy"] == ["Net Outlays"]
     assert result["row_counts"] == {"metadata": 1, "normalized": 1}
+    from facts.audit import audit
+    assert audit(tmp_path,current=True)['table_values_checked']==1
+    result['value_count']=2
+    o.db.execute('UPDATE organized_tables SET payload=? WHERE id=?',(dumps(result),did));o.db.commit()
+    with pytest.raises(ValueError,match='value/series linkage'):
+        audit(tmp_path,current=True)
 
 
 def test_accounts_with_same_title_different_dimensions_do_not_merge(tmp_path):
@@ -360,8 +366,26 @@ def test_cached_partial_results_replay_after_adapter_upgrade(tmp_path, monkeypat
     first = organize(tmp_path, maximum=1, model="test")
     assert len(calls) == 2 and first["coverage"]["coverage"]["item:semantic"] == 2
     monkeypatch.setattr("facts.organize.ADAPTER_VERSION", "test-upgraded-adapter")
-    second = organize(tmp_path, maximum=1, model="test")
+    monkeypatch.delenv("FIREWORKS_API_KEY")
+    def forbidden(*a, **kw):
+        raise AssertionError("Cached-only mode contacted a provider")
+    monkeypatch.setattr("facts.organize_llm.request", forbidden)
+    second = organize(tmp_path, maximum=1, model="test", cached_only=True)
     assert len(calls) == 2 and second["coverage"]["coverage"]["item:semantic"] == 2
+    assert second["estimated_api_cost_usd"] == 0 and second["cost_limit_usd"] == 0
+
+
+def test_cached_only_does_not_recover_running_or_submit_pending_jobs(tmp_path, monkeypatch):
+    s = Store(tmp_path); topic(s); item(s)
+    o = OrganizedStore(tmp_path)
+    jid = enqueue(o, "topic", "semantic", {"inputs": []}, "test")
+    o.db.execute("UPDATE organized_jobs SET state='running' WHERE id=?", (jid,)); o.db.commit()
+    monkeypatch.delenv("FIREWORKS_API_KEY", raising=False)
+    report = organize(tmp_path, model="test", cached_only=True)
+    assert report["semantic_jobs"]["state"] == "cached_only"
+    assert o.db.execute("SELECT state FROM organized_jobs WHERE id=?", (jid,)).fetchone()[0] == "running"
+    with pytest.raises(ValueError): organize(tmp_path,cached_only=True,retry_failed=True)
+    with pytest.raises(ValueError): organize(tmp_path,cached_only=True,use_llm=False)
 
 
 def test_terminal_semantic_failure_is_cached_until_explicit_retry(tmp_path, monkeypatch):
