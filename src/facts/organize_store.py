@@ -123,10 +123,17 @@ class OrganizedStore:
         kind = mention.get("entity_type") or "unknown"
         # Honor explicit same-name alias mappings, never fuzzy-match people or companies.
         found = self.db.execute("SELECT DISTINCT entity_id FROM organized_aliases WHERE alias=? AND entity_type=? ORDER BY entity_id", (key, kind)).fetchall()
-        eid = found[0][0] if len(found) == 1 and not mention.get("canonical_name") else ident("entity", key, kind)
+        # An explicitly supplied expansion may arrive after its acronym. Reuse a
+        # unique supported alias so prior observation IDs remain valid.
+        if mention.get("canonical_name"):
+            keys = {key, name_key(mention["name"]), *[name_key(a) for a in mention.get("aliases", [])]}
+            found = self.db.execute("SELECT DISTINCT entity_id FROM organized_aliases WHERE entity_type=? AND alias IN ("+",".join("?" for _ in keys)+") ORDER BY entity_id", (kind, *sorted(keys))).fetchall()
+        eid = found[0][0] if len(found) == 1 else ident("entity", key, kind)
         aliases = set([mention["name"], canonical, *mention.get("aliases", [])])
         previous = self.db.execute("SELECT payload FROM organized_entities WHERE id=?", (eid,)).fetchone()
         payload = json.loads(previous[0]) if previous else {"schema_version": VERSION, "id": eid, "name": canonical, "entity_type": kind}
+        if mention.get("canonical_name"):
+            payload["name"] = canonical
         payload["aliases"] = sorted(set(payload.get("aliases", [])).union(aliases))
         if mention.get("aliases") or mention.get("canonical_name"):
             evidence = {"input_ids": list(input_ids), "input_path": mention.get("input_path"), "canonical_name": canonical, "aliases": sorted(aliases)}

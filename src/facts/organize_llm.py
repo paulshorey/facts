@@ -51,6 +51,7 @@ def enqueue(store, topic, stage, payload, model=MODEL):
     jid = ident("organize-job", identity, cache_payload)
     artifact = store.put(payload)
     store.db.execute("INSERT OR IGNORE INTO organized_jobs(id,topic,stage,input_artifact,settings,state,updated) VALUES (?,?,?,?,?,'queued',?)", (jid, topic, stage, artifact, dumps(config), now()))
+    store.db.execute("UPDATE organized_jobs SET settings=? WHERE id=? AND state IN ('queued','failed_retryable')", (dumps(config), jid))
     if stage == "grouping":
         store.db.execute("UPDATE organized_jobs SET input_artifact=? WHERE id=? AND state IN ('queued','failed_retryable')", (artifact,jid))
     return jid

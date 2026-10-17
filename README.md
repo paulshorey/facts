@@ -245,3 +245,9 @@ git diff --check
 Tests cover replay-safe item imports, source reference preservation, null/zero/
 false values, full chunk coverage, local-network URL rejection, partial exports,
 truncated-input splitting, and incorrect spreadsheet dimension recovery.
+
+Organization review safeguards: retryable/queued inference jobs refresh configured
+token prices before submission; completed jobs retain historical settings. Explicit
+acronym expansions reuse a unique supported entity ID. Exact occurrence grouping
+includes entity identity, including replay of older grouping edges. Export snapshot
+identity includes the exported entity and table payloads.
