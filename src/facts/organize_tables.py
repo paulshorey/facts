@@ -17,7 +17,7 @@ from .contracts import VERSION, TableMapping, ValueColumn
 from .core import dumps, ident
 from .organize_fields import categories, decimal_text, financial_basis, parse_date, plain, unit_scale
 
-MAPPER_VERSION = "tables-v3"
+MAPPER_VERSION = "tables-v4"
 YEAR = re.compile(r"^(?:FY\s*)?((?:17|18|19|20|21)\d{2})(?:\s*[-–]\s*((?:17|18|19|20|21)\d{2}))?(?:\s*(?:estimate[ds]?|actual[ s]*|projection|enacted|proposed))?(?:\s*\d/)?$", re.I)
 VALUE_SCHEMA = pa.schema([
     ("series_id", pa.string()), ("dataset_id", pa.string()), ("period", pa.string()),
@@ -67,6 +67,7 @@ def period(text, fiscal=False):
     match = YEAR.fullmatch(text)
     if not match:
         return None
+    fiscal = fiscal or bool(re.match(r"^FY\s*\d", text, re.I))
     expression = match[1] + ("-"+match[2] if match[2] else "")
     value = parse_date(("FY" if fiscal else "")+expression, "reporting_period")
     return {"label": text, "start": value.start, "end": value.end, "calendar": value.calendar,
@@ -257,6 +258,21 @@ def normalize_table(store, manifest, mapping, digest, mapping_artifact=None):
                 for k, v in r.items():
                     if k != "source_row" and v is not None:
                         header_names[k] = plain(v)
+    dimension_columns = mapping.dimension_columns
+    if mapping.orientation == "long":
+        # Labels can be separate from declared dimensions. They still identify
+        # the account/category across its reporting periods.
+        dimension_columns = [*dimension_columns, *mapping.label_columns]
+    dimension_names = {}
+    for column in dict.fromkeys(dimension_columns):
+        if column == mapping.period_column:
+            continue
+        name = header_names.get(column) or column
+        # Distinct source columns may share a printed heading. Preserve both
+        # instead of letting a new account label overwrite an agency dimension.
+        while name in dimension_names:
+            name += f" [{column}]"
+        dimension_names[name] = column
     section = []
     store.db.execute("UPDATE organized_records SET active=0 WHERE input_key=?", (input_key,))
     try:
@@ -306,15 +322,13 @@ def normalize_table(store, manifest, mapping, digest, mapping_artifact=None):
                         p = {"label": spec.period or "unknown", "start": None, "end": None, "calendar": "unknown", "role": spec.period_role}
                     if spec.period_role != "unknown":
                         p["role"] = spec.period_role
-                    dims = {header_names.get(k, k): row.get(k) for k in mapping.dimension_columns if k != mapping.period_column}
+                    dims = {name: row.get(column) for name, column in dimension_names.items()}
                     key = [did, spec.metric, dims, hierarchy]
                     if mapping.orientation != "long":
                         key.append(row_id)
                     sid = ident("series", *key)
                     if sid not in series:
                         title = label or spec.metric
-                        if mapping.orientation == "long":
-                            title = spec.metric
                         series[sid] = {"schema_version": VERSION, "id": sid, "topic": "us-federal-spending", "record_type": "series", "content_role": "dataset", "kind": "series", "subtype": mapping.orientation,
                             "title": title, "detail": f"{manifest['name']}: {spec.metric}", "input_ids": [did],
                             "dataset_id": did, "metric": spec.metric, "basis": financial_basis(spec.basis), "original_basis": spec.basis,
