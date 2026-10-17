@@ -163,6 +163,11 @@ event/reporting dates rather than publication dates. `series --period` matches
 the exact retained period label; values also include period bounds when known.
 Historical fiscal-year labels before 1977 retain their labels without silently
 using the modern October–September calendar.
+Explicit `FY` prefixes in table period labels also select the fiscal calendar,
+independently of the workbook filename. Long-format series retain account/category
+labels in their title and dimensions so different labeled rows remain separate
+across reporting periods. The `tables-v4` mapper invalidates older cached table
+outputs; the next organization pass rebuilds derived versions from retained rows.
 
 Code handles explicit field aliases, number scales, table transformations and
 source locators. The LLM assigns semantic categories/types, extracts entity roles
@@ -228,11 +233,20 @@ versioned, and stale relations are ignored after their observations change.
 .venv/bin/python -m facts.postgres_sync --apply
 ```
 
-The first command only reports record counts. `--apply` creates the `facts`
-schema and upserts versioned record envelopes into `facts.records`, with topic,
-kind and JSONB indexes. It leaves other database schemas alone. It is an interim
-portable import contract, not a production application database design. The
-remote write path is not verified until an actual development URL is supplied.
+The first command reports local record counts and the kinds an apply would
+reconcile; it does not connect to PostgreSQL. `--apply` creates the `facts` schema
+and mirrors versioned record envelopes into `facts.records`, with topic, kind and
+JSONB indexes. One complete local catalog is authoritative for the synchronized
+kinds in that PostgreSQL target. It stages one consistent SQLite snapshot using
+COPY, upserts current envelopes and deletes remote IDs absent locally in one
+transaction. Present but empty kinds are cleared; optional organization kinds
+missing from an older local schema and unknown remote kinds remain untouched.
+Historical versions still present locally remain in the mirror. Mirror writers
+serialize; ordinary readers can continue reading the previous committed snapshot.
+Failure rolls back the entire apply, including its deletions. Other database
+schemas are left alone. This is an interim portable import contract, not a
+production application database design. The development target remains unverified
+until an actual development URL is supplied.
 
 ## Checks
 
@@ -245,6 +259,10 @@ git diff --check
 Tests cover replay-safe item imports, source reference preservation, null/zero/
 false values, full chunk coverage, local-network URL rejection, partial exports,
 truncated-input splitting, and incorrect spreadsheet dimension recovery.
+PostgreSQL reconciliation tests start and stop an isolated temporary cluster over
+a Unix socket when local `initdb`/`pg_ctl` are available for a non-root user.
+Otherwise those integration tests skip explicitly. They never use
+`FACTS_DATABASE_URL` or an existing PostgreSQL service.
 
 Collector review safeguards: public capture pins the validated IP for every redirect,
 retaining the original HTTP Host and TLS SNI and disabling environment proxy/netrc

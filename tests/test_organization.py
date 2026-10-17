@@ -12,7 +12,7 @@ from facts.organize_fields import adapt_item, measurement, parse_date
 from facts.organize_groups import compatible
 from facts.organize_llm import Budget, enqueue, run_jobs
 from facts.organize_store import OrganizedStore
-from facts.organize_tables import infer_mapping, mapping_input, normalize_table, raw_rows, validate_mapping
+from facts.organize_tables import infer_mapping, mapping_input, normalize_table, period, raw_rows, validate_mapping
 
 
 def topic(store, slug="topic"):
@@ -101,6 +101,42 @@ def test_accounts_with_same_title_different_dimensions_do_not_merge(tmp_path):
     before = o.db.execute("SELECT count(*) FROM organized_records").fetchone()[0]
     normalize_table(o, manifest, infer_mapping(manifest, rows), "digest")
     assert o.db.execute("SELECT count(*) FROM organized_records").fetchone()[0] == before
+
+
+def test_long_series_keep_label_only_accounts_separate_across_periods(tmp_path):
+    s = Store(tmp_path); topic(s, "us-federal-spending")
+    sid = s.source("us-federal-spending", "https://example.com/budget.xlsx")
+    rows = [{"source_row": str(i+1), "account": account, "agency": "Shared agency", "year": year, "amount": amount}
+            for i, (account, year, amount) in enumerate([("Account A", "FY 2025", "10"), ("Account A", "FY 2026", "20"), ("Account B", "FY 2025", "30"), ("Account B", "FY 2026", "40")])]
+    did = dataset(s, sid, "budget.xlsx:Sheet", rows, {}, s.put(b"raw", binary=True))
+    o = OrganizedStore(tmp_path)
+    manifest = json.loads(o.db.execute("SELECT payload FROM datasets WHERE id=?", (did,)).fetchone()[0])
+    mapping = TableMapping(orientation="long", label_columns=["account"], dimension_columns=["agency"], period_column="year",
+                           value_columns=[ValueColumn(column="amount", metric="outlays", unit="USD", scale="1")])
+    result = normalize_table(o, manifest, mapping, "digest")
+    series = {r["dimensions"]["account"]: r for r in o.query("us-federal-spending", kind="series", limit=0)}
+    assert result["series_count"] == 2 and set(series) == {"Account A", "Account B"}
+    values = pq.read_table(tmp_path / result["values_artifact"]).to_pylist()
+    for account, expected in [("Account A", [Decimal("10"), Decimal("20")]), ("Account B", [Decimal("30"), Decimal("40")])]:
+        assert series[account]["title"] == account
+        assert series[account]["dimensions"]["agency"] == "Shared agency"
+        assert [v["value"] for v in values if v["series_id"] == series[account]["id"]] == expected
+    assert values[0]["period"] == "FY 2025" and values[0]["period_start"] == "2024-10-01"
+    assert values[0]["period_end"] == "2025-09-30" and values[0]["calendar"] == "fiscal"
+
+
+@pytest.mark.parametrize("label,start,end,calendar", [
+    ("FY2025", "2024-10-01", "2025-09-30", "fiscal"),
+    ("fy 2025", "2024-10-01", "2025-09-30", "fiscal"),
+    ("FY 2025–2026 estimate", "2024-10-01", "2026-09-30", "fiscal"),
+    ("FY 1962", None, None, "fiscal"),
+    ("2025", "2025-01-01", "2025-12-31", "unknown"),
+])
+def test_table_period_honors_source_fiscal_prefix_without_filename_hint(label, start, end, calendar):
+    parsed = period(label)
+    assert (parsed["start"], parsed["end"], parsed["calendar"]) == (start, end, calendar)
+    assert parsed["label"] == label
+    assert period("2025", fiscal=True)["start"] == "2024-10-01"
 
 
 def test_mapping_rejects_invented_columns_or_unsupported_unit_evidence():
