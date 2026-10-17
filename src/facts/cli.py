@@ -5,14 +5,56 @@ from .core import Store, search, capture_sources, fallback_extract, normalize, e
 
 def main():
     parser = argparse.ArgumentParser(description="Source-preserving itemized research collector")
-    parser.add_argument("command", choices=["init", "search", "capture", "fallback", "normalize", "repair-truncated", "export", "status", "import", "items", "sources"])
+    parser.add_argument("command", choices=["init", "search", "capture", "fallback", "normalize", "repair-truncated", "export", "status", "import", "items", "sources", "organize", "series"])
     parser.add_argument("--topic", default="all")
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--workers", type=int, default=0)
     parser.add_argument("--file")
     parser.add_argument("--kind")
     parser.add_argument("--contains")
+    parser.add_argument("--view", choices=["observed", "organized", "grouped"], default="observed")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--pilot", action="store_true")
+    parser.add_argument("--incremental", action="store_true", help="Continue cached organization work (also the default)")
+    parser.add_argument("--max-cost-usd", type=float, default=10)
+    parser.add_argument("--model")
+    parser.add_argument("--no-llm", action="store_true")
+    parser.add_argument("--organized", action="store_true")
+    parser.add_argument("--entity")
+    parser.add_argument("--category")
+    parser.add_argument("--group")
+    parser.add_argument("--basis")
+    parser.add_argument("--content-role")
+    parser.add_argument("--date-from")
+    parser.add_argument("--date-to")
+    parser.add_argument("--period")
     args = parser.parse_args()
+    # Read-only organization commands must not instantiate the collector Store,
+    # execute DDL or load/requeue topic definitions.
+    if args.command == "organize":
+        from .core import dumps
+        from .organize import organize
+        options = {"dry_run": args.dry_run, "pilot": args.pilot, "maximum": args.max_cost_usd,
+                   "workers": args.workers or 2, "use_llm": not args.no_llm}
+        if args.model:
+            options["model"] = args.model
+        print(dumps(organize(topic=args.topic, **options))); return
+    if args.command == "items" and args.view != "observed":
+        from .core import dumps
+        from .organize_store import OrganizedStore
+        store = OrganizedStore(readonly=True)
+        for value in store.query(args.topic, args.view, args.limit or 20, args.contains, args.entity, args.category, args.group, args.kind, args.basis, args.content_role, args.date_from, args.date_to):
+            print(dumps(value))
+        return
+    if args.command == "export" and args.organized:
+        from .organize_export import export_organized
+        print(json.dumps(export_organized(topic=args.topic), indent=2)); return
+    if args.command == "series":
+        from .core import dumps
+        from .organize_export import query_series
+        for value in query_series(topic=args.topic, period=args.period, basis=args.basis, limit=args.limit or 20):
+            print(dumps(value))
+        return
     store = Store()
     store.load_topics()
     if args.command == "search": search(store, args.topic, args.limit, args.workers or 4)
