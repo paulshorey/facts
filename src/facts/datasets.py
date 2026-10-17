@@ -52,6 +52,8 @@ def treasury(store):
                 if int(payload.get("meta", {}).get("total-pages", 1)) > 1:
                     raise ValueError("Treasury snapshot exceeds requested page size; pagination required")
                 cid = store.capture(sid, "dataset_api", payload, "", {"period": period, "table": table})
+                # API amounts are dollars. The human-readable MTS PDF scales these to
+                # millions; its display convention must not be applied to API values.
                 did = dataset(store, sid, table+"-"+period, rows, {"period": period, "api_metadata": payload.get("meta"), "units": "USD", "unit_mapping": "treasury-api-dollars-v1", "hierarchy_preserved": True}, raw)
                 for row in rows:
                     expression = row.get("current_fytd_net_outly_amt")
