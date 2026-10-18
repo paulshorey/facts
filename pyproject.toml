@@ -6,10 +6,11 @@ build-backend = "setuptools.build_meta"
 name = "facts-research"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["httpx", "pydantic", "trafilatura", "pymupdf", "duckdb", "pyarrow", "openpyxl", "feedparser", "psycopg[binary]", "parallel-web", "parallel-web-tools[cli]", "yt-dlp"]
+dependencies = ["httpx", "pydantic", "trafilatura", "pymupdf", "duckdb", "pyarrow", "openpyxl", "feedparser", "psycopg[binary]", "parallel-web", "parallel-web-tools[cli]", "yt-dlp", "boto3==1.43.114"]
 
 [project.scripts]
 facts = "facts.cli:main"
+facts-handoff = "facts.handoff:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

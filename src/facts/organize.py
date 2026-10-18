@@ -474,23 +474,26 @@ def enqueue_semantic(store, inputs, model):
     return ids
 
 
-def organize(root=ROOT, topic="all", *, dry_run=False, pilot=False, maximum=10, workers=2, model=MODEL, use_llm=True, retry_failed=False):
+def organize(root=ROOT, topic="all", *, dry_run=False, pilot=False, maximum=10, workers=2, model=MODEL, use_llm=True, retry_failed=False, cached_only=False):
+    if cached_only and (not use_llm or retry_failed):
+        raise ValueError("Cached-only organization needs cache replay and cannot retry failed inference")
     if workers < 1 or workers > 8:
         raise ValueError("Organization supports one through eight LLM requests at a time (default two)")
     store = OrganizedStore(root, readonly=dry_run)
     if dry_run:
         result = store.inventory(topic)
         result.update({"mode": "dry-run", "schema_version": VERSION,
-            "cost_limit_usd": maximum, "model": model, "note": "No files, jobs or API requests created. Prices are estimates; original extraction queue is not processed."})
+            "cost_limit_usd": 0 if cached_only else maximum, "cached_only": cached_only,
+            "model": model, "note": "No files, jobs or API requests created. Prices are estimates; original extraction queue is not processed."})
         store.db.close()
         return result
     topics = [r[0] for r in store.db.execute("SELECT id FROM topics ORDER BY id") if topic == "all" or r[0] == topic]
     if not topics:
         raise ValueError("Unknown topic")
-    budget = Budget(maximum)
+    budget = Budget(0 if cached_only else maximum, cached_only=cached_only)
     run_id = ident("organize-run", now(), topics, pilot)
     run = {"id": run_id, "started": now(), "topics": topics, "pilot": pilot, "schema_version": VERSION,
-           "model": model, "cost_limit_usd": maximum, "state": "running"}
+           "model": model, "cost_limit_usd": budget.maximum, "cached_only": cached_only, "state": "running"}
     with store.locks(topics):
         backup = store.root / "storage/backups/catalog-before-organization.sqlite"
         if not backup.exists():

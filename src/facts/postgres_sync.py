@@ -1,10 +1,12 @@
 """Optional structured-record sync. Local artifacts remain local until uploaded."""
 import argparse
 import contextlib
+import hashlib
 import json
 import os
+from pathlib import Path
 
-from .core import now, ident
+from .core import ROOT, dumps, now, ident
 
 SCHEMA = """
 CREATE SCHEMA IF NOT EXISTS facts;
@@ -18,6 +20,15 @@ CREATE TABLE IF NOT EXISTS facts.records (
 );
 CREATE INDEX IF NOT EXISTS records_topic_kind_idx ON facts.records(topic,kind);
 CREATE INDEX IF NOT EXISTS records_payload_gin_idx ON facts.records USING gin(payload);
+CREATE TABLE IF NOT EXISTS facts.import_receipts (
+  id text PRIMARY KEY, catalog_digest text NOT NULL,
+  artifact_manifest text, counts jsonb NOT NULL,
+  synchronized_kinds jsonb NOT NULL, committed_at timestamptz NOT NULL
+);
+CREATE TABLE IF NOT EXISTS facts.mirror_state (
+  id text PRIMARY KEY CHECK (id='current'),
+  receipt_id text NOT NULL REFERENCES facts.import_receipts(id)
+);
 """
 
 BASE_TABLES = ('topics', 'searches', 'sources', 'captures', 'items', 'datasets', 'extraction_jobs', 'attempts')
@@ -72,7 +83,7 @@ def records(store):
             yield table,rid,value.get('topic'),value
 
 
-def sync_records(store, connection):
+def sync_records(store, connection, *, artifact_manifest=None):
     """Mirror the kinds present in one catalog; all remote changes commit together."""
     from psycopg.types.json import Jsonb
 
@@ -88,6 +99,8 @@ def sync_records(store, connection):
         connection.execute('LOCK TABLE facts.records IN SHARE ROW EXCLUSIVE MODE')
         with catalog_snapshot(store):
             kinds = synchronized_kinds(store)
+            counts = dict.fromkeys(kinds, 0)
+            leaves = []
             connection.execute('''CREATE TEMP TABLE facts_sync_stage (
                 kind text NOT NULL, id text NOT NULL, topic text,
                 payload jsonb NOT NULL, synced_at timestamptz NOT NULL,
@@ -98,18 +111,33 @@ def sync_records(store, connection):
                         if kind not in kinds:
                             raise ValueError('Record kind is outside the synchronized catalog')
                         copy.write_row((kind, rid, topic, Jsonb(payload), synced_at))
+                        counts[kind] += 1
+                        leaves.append(hashlib.sha256(dumps([kind, rid, topic, payload]).encode()).hexdigest())
                         count += 1
             connection.execute('ANALYZE facts_sync_stage')
-        connection.execute('''INSERT INTO facts.records (kind,id,topic,payload,synced_at)
+        written = connection.execute('''INSERT INTO facts.records AS existing (kind,id,topic,payload,synced_at)
             SELECT kind,id,topic,payload,synced_at FROM facts_sync_stage
             ON CONFLICT(kind,id) DO UPDATE SET payload=excluded.payload,
-                topic=excluded.topic,synced_at=excluded.synced_at''')
+                topic=excluded.topic,synced_at=excluded.synced_at
+            WHERE existing.payload IS DISTINCT FROM excluded.payload
+               OR existing.topic IS DISTINCT FROM excluded.topic''').rowcount
         deleted = connection.execute('''DELETE FROM facts.records AS existing
             WHERE existing.kind = ANY(%s::text[]) AND NOT EXISTS (
                 SELECT 1 FROM facts_sync_stage AS staged
                 WHERE staged.kind=existing.kind AND staged.id=existing.id)''', (kinds,)).rowcount
-    return {'synced_records': count, 'deleted_records': deleted,
-            'synchronized_kinds': kinds, 'artifacts': 'local; not uploaded'}
+        # Hash logical contents, independent of enumeration order and delivery time.
+        digest = hashlib.sha256(dumps([sorted(kinds), sorted(leaves)]).encode()).hexdigest()
+        receipt_id = hashlib.sha256(dumps([digest, artifact_manifest]).encode()).hexdigest()
+        connection.execute('''INSERT INTO facts.import_receipts
+            (id,catalog_digest,artifact_manifest,counts,synchronized_kinds,committed_at)
+            VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT(id) DO NOTHING''',
+            (receipt_id,digest,artifact_manifest,Jsonb(counts),Jsonb(kinds),synced_at))
+        connection.execute('''INSERT INTO facts.mirror_state VALUES ('current',%s)
+            ON CONFLICT(id) DO UPDATE SET receipt_id=excluded.receipt_id''', (receipt_id,))
+    return {'synced_records': count, 'written_records': written, 'deleted_records': deleted,
+            'synchronized_kinds': kinds, 'counts': counts, 'receipt_id': receipt_id,
+            'catalog_digest': digest, 'artifact_manifest': artifact_manifest,
+            'artifacts': 'manifest linked; verify its delivery receipt' if artifact_manifest else 'local; not uploaded'}
 
 
 def dry_run(store):
@@ -123,18 +151,43 @@ def dry_run(store):
 
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--apply',action='store_true');args=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('--apply',action='store_true')
+    p.add_argument('--root',type=Path,default=ROOT)
+    p.add_argument('--bundle',type=Path)
+    p.add_argument('--snapshot')
+    p.add_argument('--artifact-receipt',type=Path)
+    args=p.parse_args()
     from .organize_store import OrganizedStore
     # Reading counts should not initialize tables or alter collection state.
-    s=OrganizedStore(readonly=True)
+    s=OrganizedStore(args.root,readonly=True)
     try:
         if not args.apply:
             print(json.dumps(dry_run(s),indent=2));return
+        if args.snapshot:
+            from .handoff import load_manifest, verify
+            from .artifact_store import digest_file
+            if not args.bundle or not args.artifact_receipt:
+                raise ValueError('A snapshot requires its verified bundle and artifact delivery receipt')
+            manifest=load_manifest(args.bundle,args.snapshot);verify(args.bundle,args.snapshot)
+            catalog=next(f for f in manifest['files'] if f['path']=='storage/catalog.sqlite')
+            if digest_file(args.root/'storage/catalog.sqlite') != (catalog['sha256'],catalog['size']):
+                raise ValueError('Sync a restored snapshot root to link its artifact manifest')
+            receipt=json.loads(args.artifact_receipt.read_text())
+            if (receipt['snapshot'] != args.snapshot or not receipt.get('verified_at')
+                    or receipt['verified_objects'] != len({f['sha256'] for f in manifest['files']})):
+                raise ValueError('Artifact delivery receipt does not match this snapshot')
+        elif args.artifact_receipt or args.bundle:
+            raise ValueError('Artifact options require --snapshot')
         import psycopg
         url=os.environ.get('FACTS_DATABASE_URL')
         if not url:raise SystemExit('Set FACTS_DATABASE_URL in the environment; do not pass credentials as command arguments.')
         with psycopg.connect(url) as conn:
-            result=sync_records(s,conn)
+            result=sync_records(s,conn,artifact_manifest=args.snapshot)
+            target={'host':conn.info.host,'port':conn.info.port,'database':conn.info.dbname}
+        from .handoff import journal
+        target_id=hashlib.sha256(dumps(target).encode()).hexdigest()[:16]
+        result.update({'database_target':target,'delivered_at':now()})
+        journal(args.root/'storage/deliveries/postgres'/target_id/f'{result["receipt_id"]}.json', result)
         print(json.dumps(result))
     except Exception as error:
         # Driver errors can include connection details; report only the error class.
