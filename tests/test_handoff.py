@@ -1,6 +1,7 @@
 import hashlib
 import io
 import json
+import sqlite3
 from pathlib import Path
 
 from botocore.stub import Stubber, ANY
@@ -148,3 +149,46 @@ def test_audit_checks_retained_artifact_references(corpus):
     path.unlink()
     with pytest.raises(ValueError,match='Missing or unsafe artifact'):
         audit(corpus,current=True)
+
+
+@pytest.mark.parametrize('reference', ['search', 'extraction_input', 'extraction_output', 'attempt', 'followup'])
+def test_every_catalog_artifact_is_required_by_audit_backup_and_verify(corpus, tmp_path, reference):
+    from facts.audit import audit
+    from facts.core import import_packet
+    from facts.organize import organize
+    store = Store(corpus)
+    artifact = store.put({'retained': reference})
+    if reference == 'search':
+        store.db.execute("INSERT INTO searches(id,topic,family,payload,artifact) VALUES ('search','topic','fixture','{}',?)", (artifact,))
+    elif reference.startswith('extraction_'):
+        source = store.source('topic', 'https://example.com/report')
+        capture = store.capture(source, 'direct_http', b'capture', 'source text')
+        text = artifact if reference == 'extraction_input' else store.put('input')
+        output = artifact if reference == 'extraction_output' else None
+        store.db.execute("INSERT INTO extraction_jobs(id,topic,capture,chunk,text_artifact,prompt_version,artifact) VALUES ('job','topic',?,0,?,'fixture',?)", (capture, text, output))
+    elif reference == 'attempt':
+        store.db.execute("INSERT INTO attempts(id,stage,target,started,outcome,artifact,metadata) VALUES ('attempt','search','search','2026-01-01','ok',?,'{}')", (artifact,))
+    else:
+        packet = tmp_path/'packet.json'
+        packet.write_text(dumps({'followup_queries': ['Find retained evidence']}))
+        import_packet(store, 'topic', packet)
+        artifact = store.db.execute('SELECT origin FROM followups').fetchone()[0]
+        store.db.execute("INSERT INTO followups VALUES ('topic','Job-origin query','extraction-job-id')")
+    store.db.commit(); store.db.close()
+    organize(corpus, cached_only=True)
+    with sqlite3.connect(corpus/'storage/catalog.sqlite') as catalog:
+        assert artifact in handoff.catalog_artifacts(catalog)
+    catalog.close()
+    assert audit(corpus, current=True)['artifact_references_checked'] >= 1
+    bundle = tmp_path/'bundle'; snapshot = handoff.backup(corpus, bundle)['snapshot']
+    payload = handoff.load_manifest(bundle, snapshot)
+    payload['files'] = [member for member in payload['files'] if member['path'] != artifact]
+    content = dumps(payload).encode(); identity = hashlib.sha256(content).hexdigest()
+    DirectoryStore(bundle).path(handoff.manifest_key(identity)).write_bytes(content)
+    with pytest.raises(ValueError, match='omits catalog-referenced'):
+        handoff.verify(bundle, identity)
+    (corpus/artifact).unlink()
+    with pytest.raises(ValueError, match='Missing or unsafe artifact'):
+        audit(corpus, current=True)
+    with pytest.raises(ValueError, match='missing catalog-referenced'):
+        handoff.backup(corpus, bundle)

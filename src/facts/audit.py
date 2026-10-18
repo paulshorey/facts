@@ -8,7 +8,7 @@ import pyarrow.parquet as pq
 
 from .contracts import Observation, SeriesDefinition
 from .core import ROOT, dumps
-from .handoff import catalog_fingerprint, journal
+from .handoff import catalog_artifacts, catalog_fingerprint, journal
 from .organize import ADAPTER_VERSION
 from .organize_store import OrganizedStore
 from .organize_tables import MAPPER_VERSION
@@ -24,15 +24,7 @@ def audit(root=ROOT, *, current=False):
         inventory=store.inventory()
         sources={r[0] for r in store.db.execute('SELECT id FROM sources')}
         captures={r[0] for r in store.db.execute('SELECT id FROM captures')}
-        paths=set();versions=Counter();active=hashlib.sha256();checked=0;series_by_dataset={}
-        def collect(value, key=''):
-            if isinstance(value,dict):
-                for name, child in value.items(): collect(child,name)
-            elif isinstance(value,list):
-                for child in value: collect(child,key)
-            elif (isinstance(value,str) and value.startswith(('storage/','exports/'))
-                    and (key.endswith(('_artifact','_artifacts')) or key in {'artifact','parquet'})):
-                paths.add(value)
+        paths=catalog_artifacts(store.db);versions=Counter();active=hashlib.sha256();checked=0;series_by_dataset={}
         for row in store.db.execute('SELECT payload FROM organized_records WHERE active=1 ORDER BY id,version'):
             value=json.loads(row[0])
             (SeriesDefinition if value['record_type']=='series' else Observation).model_validate(value)
@@ -46,13 +38,7 @@ def audit(root=ROOT, *, current=False):
             for ref in value.get('references',[]):
                 if ref.get('source_id') and ref['source_id'] not in sources: raise ValueError('Missing referenced source')
                 if ref.get('capture_id') and ref['capture_id'] not in captures: raise ValueError('Missing referenced capture')
-            collect(value);active.update(dumps(value).encode());active.update(b'\n');checked+=1
-        for table in ['captures','datasets','organized_jobs','organized_tables','organized_mappings']:
-            for row in store.db.execute(f'SELECT * FROM {table}'):
-                for key in row.keys():
-                    value=row[key]
-                    if key=='payload' and isinstance(value,str): collect(json.loads(value))
-                    elif key in {'artifact','text_artifact','input_artifact','response_artifact'} and value: paths.add(value)
+            active.update(dumps(value).encode());active.update(b'\n');checked+=1
         for path in paths:
             selected=root/path
             if not selected.resolve().is_relative_to(root.resolve()) or not selected.is_file():

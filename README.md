@@ -300,7 +300,10 @@ table fingerprints. Prior backup directories, locks, live SQLite companions,
 hidden files and credentials are excluded. Run while collection/export stages are
 idle: changing files fail verification instead of producing a completed manifest.
 The manifest must include every catalog-referenced artifact, including historical
-records. Missing retained evidence fails backup/verification. An in-repository
+records, search and extraction inputs/outputs, attempt artifacts, and raw packet
+origins stored by follow-up-only imports. Job IDs in follow-up origins are not file
+references. The read-only audit uses this same artifact inventory. Missing retained
+evidence fails audit, backup, and verification. An in-repository
 bundle must live under `storage/handoffs`; otherwise use a separate external path
 so excluding the backup cannot accidentally exclude original evidence directories.
 The bundle includes raw captures, source packets, model outputs, provider task IDs,

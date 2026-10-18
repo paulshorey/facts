@@ -70,12 +70,13 @@ def catalog_artifacts(database):
         # Quote SQLite catalog identifiers, including FTS's own shadow tables.
         quoted='"'+table.replace('"','""')+'"'
         columns=[r[1] for r in database.execute(f'PRAGMA table_info({quoted})')]
-        selected=[c for c in columns if c in {'payload','metadata','artifact','parquet'} or c.endswith('_artifact')]
+        selected=[c for c in columns if c in {'payload','metadata','artifact','parquet'} or c.endswith('_artifact')
+                  or (table == 'followups' and c == 'origin')]
         if not selected: continue
         for row in database.execute('SELECT '+','.join('"'+c.replace('"','""')+'"' for c in selected)+' FROM '+quoted):
             for key,value in zip(selected,row):
                 if value is None: continue
-                collect(json.loads(value) if key in {'payload','metadata'} else value,key)
+                collect(json.loads(value) if key in {'payload','metadata'} else value, 'artifact' if table == 'followups' and key == 'origin' else key)
     return paths
 
 
