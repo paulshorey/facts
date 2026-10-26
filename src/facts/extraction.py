@@ -68,10 +68,12 @@ def collect(store, topic, limit, workers, *, maximum, input_rate, output_rate, r
                 done,_=wait(pending,return_when=FIRST_COMPLETED)
                 for future in done:
                     row=pending.pop(future)
+                    uncertain = False
                     try: raw,parsed,error=future.result()
                     except Exception as failure:
-                        # Preserve a failed request as uncertain billing; its
-                        # reservation is never returned to this run's budget.
+                        # No response proves completion/rejection. Preserve the running
+                        # reservation for manual recovery, including with --retry-failed.
+                        uncertain = True; stopped = True; report['state']='provider_uncertain'
                         raw={'error_class':type(failure).__name__};parsed=None;error=type(failure).__name__
                         status=getattr(getattr(failure,'response',None),'status_code',None)
                         if status in {401,403,429}:
@@ -82,7 +84,7 @@ def collect(store, topic, limit, workers, *, maximum, input_rate, output_rate, r
                         artifact=store.put(raw)
                         if error:
                             split=core.split_job(store,row) if error=='output_truncated' else []
-                            state='split' if split else 'failed'
+                            state='running' if uncertain else ('split' if split else 'failed')
                         else:
                             for index,item in enumerate(parsed.items):
                                 store.item(topic,row['source'],row['capture'],item.model_dump(),{'type':'extracted_chunk',
