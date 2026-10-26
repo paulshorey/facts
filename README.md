@@ -44,8 +44,8 @@ pending work; do not delete storage to restart a campaign.
 .venv/bin/facts capture --topic us-federal-spending --limit 200 --workers 6
 .venv/bin/facts fallback --topic trump-second-term --limit 100
 .venv/bin/facts fallback --topic us-federal-spending --limit 100
-.venv/bin/facts normalize --topic trump-second-term --limit 100 --workers 2
-.venv/bin/facts normalize --topic us-federal-spending --limit 100 --workers 2
+# Only after the recovery gates pass and current model token rates are configured:
+.venv/bin/facts normalize --topic trump-second-term --limit 5 --workers 1 --max-cost-usd 1 --existing-only
 .venv/bin/facts repair-truncated
 .venv/bin/facts export
 ```
@@ -53,17 +53,38 @@ pending work; do not delete storage to restart a campaign.
 `capture` targets source URLs without a recorded direct capture. HTTP error
 responses are retained; `fallback` uses Parallel Extract for sources without a
 successful readable capture. An excerpt remains usable when full retrieval fails.
-`normalize` queues every chunk of the best available capture and processes a
-bounded batch. Truncated outputs split into smaller tasks; all original input
+`normalize` requires one explicit topic, positive `--limit`, and explicit
+`--max-cost-usd`. Configure current model rates in `FACTS_EXTRACT_INPUT_RATE` and
+`FACTS_EXTRACT_OUTPUT_RATE` (USD per million tokens), or pass
+`--input-usd-per-million` / `--output-usd-per-million`. There are no stale default
+extraction prices. The ceiling is a conservative reservation using these declared
+rates, not a provider billing guarantee. It covers up to three HTTP attempts,
+input byte/token framing allowance and maximum output/reasoning allowance. A
+configured rate/model mismatch can invalidate a dollar estimate; verify the quote
+before a paid batch. Reservations are never refunded within a run.
+
+`--existing-only` consumes the saved queue without generating new extraction jobs.
+Otherwise the command queues chunks of the best available saved capture first.
+Failed jobs are excluded unless `--retry-failed` is supplied. A cost reservation
+and `running` job state commit before submission; interrupted uncertain jobs are
+left `running` for manual evidence recovery, not automatically retried. Inspect
+their `normalize_reservation` attempts and saved outputs before deciding whether
+to retry. Transport, HTTP and response-parsing exceptions also preserve `running`
+and stop new dispatch because an exception alone does not establish that no paid
+request completed. Even `--retry-failed` excludes these uncertain jobs. Completed
+responses with an invalid extraction schema remain explicit failed jobs. Storage failures stop dispatch; other already submitted bounded requests
+may finish, but no replacement request is launched. No sync/crawl/batch loop is
+started on failure. Truncated outputs split into smaller tasks; all original input
 and failed output artifacts remain available. `repair-truncated` also splits
 older failed attempts. Topic definition changes create new extraction contexts.
 
 The SQLite catalog remains the local collection journal; the dedicated development
-PostgreSQL database receives explicit verified mirror imports. Run only one process per stage/topic; a distributed
-worker/lease system is not implemented. SQLite WAL permits different collection
-stages to write incremental batches, but it does not provide distributed task
-ownership. Do not run an `all` pass concurrently with another pass of the same
-stage. Stage commands intentionally finish a finite batch; no recurring schedule
+PostgreSQL database receives explicit verified mirror imports. Supported mutating
+entrypoints and backup share one nonblocking, reentrant, collector-wide file lock
+at `storage/locks/collector.lock`. Run one writer per collector root on one host;
+different topics/stages no longer run concurrently with backup. Low-level direct
+`Store` mutations remain the caller's responsibility. SQLite WAL and local locks
+do not provide distributed ownership. Stage commands finish a finite batch; no recurring schedule
 or always-on daemon is installed.
 
 ## Bulk datasets and source expansion
@@ -235,11 +256,10 @@ versioned, and stale relations are ignored after their observations change.
 
 ```bash
 .venv/bin/python -m facts.postgres_sync
-# After providing the development URL as FACTS_DATABASE_URL:
-.venv/bin/python -m facts.postgres_sync --apply
+# For writes, use the snapshot-linked command below with its S3 delivery receipt.
 ```
 
-The first command reports local record counts and the kinds an apply would
+The command above reports local record counts and the kinds an apply would
 reconcile; it does not connect to PostgreSQL. `--apply` creates the `facts` schema
 and mirrors versioned record envelopes into `facts.records`, with topic, kind and
 JSONB indexes. One complete local catalog is authoritative for the synchronized
@@ -256,7 +276,10 @@ content-addressed receipt in `facts.import_receipts`; `facts.mirror_state` point
 to the receipt describing the current mirror. Identical logical content and
 artifact-manifest identity reuse the same receipt. The local delivery receipt is
 written only after the PostgreSQL commit. A lost local receipt is safe to recover
-by repeating the import. A failed receipt insert rolls back the mirror too.
+by repeating the import. The CLI holds the collector-wide writer lock from snapshot
+validation through the PostgreSQL commit and local receipt write, so supported
+writers cannot change the catalog between verification and import. A failed
+receipt insert rolls back the mirror too.
 Unchanged envelopes skip the upsert write, avoiding repeated JSONB/index/WAL work
 on retries. `synced_records` counts staged envelopes; `written_records` counts
 inserts/changed envelopes. Per-record `synced_at` tracks the last content import,
@@ -264,6 +287,15 @@ while receipts record completed deliveries.
 Local receipts are scoped by the non-secret database host/port/name under
 `storage/deliveries/postgres/<target-id>/`, so identical imports to different
 databases cannot overwrite each other's local delivery records.
+Bare `--apply` is rejected before opening the catalog. Operational imports require
+`--snapshot`, `--bundle` and `--artifact-receipt`; the receipt must name the exact
+configured S3 endpoint/bucket/prefix, not a filesystem mirror or another bucket.
+The CLI also retrieves and hashes the configured replica's manifest before opening
+PostgreSQL, so missing/inaccessible/corrupt replica metadata blocks an import.
+The lower-level primitive rejects downgrading an already linked mirror to an
+unlinked receipt. A receipt records a completed transfer; the manifest check does
+not rehash all remote file objects. Reverify after any known damage
+or access change, and check actual provider volume usage before a new full import.
 
 The dedicated Facts development resources and secure connection setup are
 documented in [.railway/README.md](.railway/README.md). Read-only infrastructure
@@ -309,6 +341,9 @@ so excluding the backup cannot accidentally exclude original evidence directorie
 The bundle includes raw captures, source packets, model outputs, provider task IDs,
 derived Parquet/JSONL, topic definitions and exports. A blog export alone is not
 a full research backup. Code/dependencies and credentials are restored separately.
+New manifests use `handoff.v2` and declare their original-table inventory. Legacy
+`handoff.v1` inventories are frozen independently of the current writer's table
+list, so adding another preserved table cannot invalidate a published snapshot.
 
 ```bash
 # Replace this placeholder with the digest printed by backup.
@@ -343,8 +378,38 @@ same delivery protocol for an independent filesystem backup.
 The S3 client requires `FACTS_S3_ENDPOINT`, `FACTS_S3_BUCKET`,
 `FACTS_S3_ACCESS_KEY_ID`, `FACTS_S3_SECRET_ACCESS_KEY`; optional `FACTS_S3_REGION`
 and `FACTS_S3_PREFIX` default to `auto` and `facts-v1`. Manifests contain no
-credentials. The bucket must honor conditional object creation. This is client
-immutability, not provider-enforced object lock; keep an independent copy.
+credentials. Conditional creation is requested as a best-effort safeguard.
+Railway makes no separate guarantee of atomic conditional writes, listing
+freshness or read-after-write consistency. The same credential can overwrite or
+delete content; bucket backups, object lock and versioning are not provided.
+This is a verified replica, not an immutable store; keep the local bundle. See
+[Railway's clarification](https://station.railway.com/questions/railway-buckets-consistency-and-create-d83ae29c).
+
+Discover snapshot IDs if `latest.json` is lost:
+
+```bash
+.venv/bin/facts-handoff list
+.venv/bin/python -m dotenv -f .env.facts-dev run --override -- .venv/bin/facts-handoff list --remote
+```
+
+Discovery validates manifest identity but does not claim a complete/fresh listing
+or verify file objects. Select an explicit snapshot ID and run `verify`/`receive`.
+Ordinary delivery/retrieval still fail on a damaged existing object. Explicit
+repair uses a fully verified local bundle, quarantines damaged replica bytes and
+their digest before replacement, replaces one key, then verifies it:
+
+```bash
+.venv/bin/python -m dotenv -f .env.facts-dev run --override -- \
+  .venv/bin/facts-handoff repair --snapshot "$facts_snapshot" \
+  --object-digest '<damaged-object-sha256>' --confirm-repair
+# Omit --object-digest to repair the snapshot's manifest instead.
+```
+
+Repair is never an automatic response to a failed upload/download. Quarantine and
+repair receipts remain under the local bundle. Run `deliver` again after repair
+to record a fresh full verification. Transfers/repairs for one bundle share a
+local writer lock; concurrent writers on different hosts/bundles are unsupported,
+and this protocol does not claim provider compare-and-swap semantics.
 
 Link a PostgreSQL import to the exact delivered artifact snapshot by importing
 from a restored root and supplying its verified delivery receipt:
@@ -360,7 +425,7 @@ from a restored root and supplying its verified delivery receipt:
 The command rejects a catalog whose bytes differ from the bundle snapshot.
 Remote SQL receipts include the logical catalog digest, synchronized kinds,
 per-kind counts and artifact-manifest ID. The current mirror may later advance;
-the immutable artifact snapshot remains the recovery source for earlier receipts.
+the content-addressed artifact snapshot remains the recovery source for earlier receipts.
 Database outages and failed uploads leave the original catalog, last successful
 receipt and pending extraction work intact; retry delivery without recrawling or
 resubmitting research/model jobs. PostgreSQL remains a development mirror of the

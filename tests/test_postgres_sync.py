@@ -189,6 +189,8 @@ def test_import_receipt_is_atomic_repeatable_and_tracks_current_mirror(tmp_path,
     second=postgres_sync.sync_records(store,postgres,artifact_manifest='fixture-manifest')
     assert first['receipt_id']==second['receipt_id']
     assert first['written_records']==1 and second['written_records']==0
+    with pytest.raises(ValueError,match='downgraded'):
+        postgres_sync.sync_records(store,postgres)
     assert postgres.execute('SELECT count(*) FROM facts.import_receipts').fetchone()[0]==1
     assert postgres.execute('SELECT receipt_id FROM facts.mirror_state').fetchone()[0]==first['receipt_id']
     saved=postgres.execute('SELECT counts FROM facts.import_receipts').fetchone()[0]
@@ -207,19 +209,34 @@ def test_import_receipt_is_atomic_repeatable_and_tracks_current_mirror(tmp_path,
 
 def test_lost_local_receipt_retries_without_duplicate_remote_receipt(tmp_path,postgres,monkeypatch):
     from facts import handoff
-    store=Store(tmp_path);add_topic(store);store.db.close()
+    root=tmp_path/'restored';bundle=tmp_path/'bundle'
+    store=Store(tmp_path/'source');add_topic(store);store.db.close()
+    snapshot=handoff.backup(tmp_path/'source',bundle)['snapshot']
+    handoff.restore(bundle,snapshot,root)
+    connection={'FACTS_S3_ENDPOINT':'https://fixture.invalid','FACTS_S3_BUCKET':'evidence',
+        'FACTS_S3_ACCESS_KEY_ID':'fixture','FACTS_S3_SECRET_ACCESS_KEY':'fixture'}
+    for key,value in connection.items(): monkeypatch.setenv(key,value)
+    receipt=tmp_path/'receipt.json'
+    handoff.journal(receipt,{'snapshot':snapshot,'destination':'s3:fixture.invalid/evidence/facts-v1',
+        'verified_objects':len({f['sha256'] for f in handoff.load_manifest(bundle,snapshot)['files']}),'verified_at':'2026-10-25T00:00:00Z'})
+    import io
+    def remote_manifest(self,key):
+        assert key==handoff.manifest_key(snapshot)
+        return io.BytesIO((bundle/key).read_bytes())
+    monkeypatch.setattr('facts.artifact_store.S3Store.open',remote_manifest)
     monkeypatch.setenv('FACTS_DATABASE_URL',postgres.info.dsn)
-    monkeypatch.setattr('sys.argv',['facts.postgres_sync','--apply','--root',str(tmp_path)])
+    monkeypatch.setattr('sys.argv',['facts.postgres_sync','--apply','--root',str(root),
+        '--snapshot',snapshot,'--bundle',str(bundle),'--artifact-receipt',str(receipt)])
     original=handoff.journal
     def disk_failure(*args): raise OSError('simulated local interruption after commit')
     monkeypatch.setattr(handoff,'journal',disk_failure)
     with pytest.raises(SystemExit,match='OSError'): postgres_sync.main()
     assert postgres.execute('SELECT count(*) FROM facts.import_receipts').fetchone()[0]==1
-    assert not (tmp_path/'storage/deliveries').exists()
+    assert not (root/'storage/deliveries').exists()
     monkeypatch.setattr(handoff,'journal',original)
     postgres_sync.main()
     assert postgres.execute('SELECT count(*) FROM facts.import_receipts').fetchone()[0]==1
-    assert len(list((tmp_path/'storage/deliveries/postgres').rglob('*.json')))==1
+    assert len(list((root/'storage/deliveries/postgres').rglob('*.json')))==1
 
 
 def test_database_disconnect_keeps_previous_mirror_and_can_retry(tmp_path,postgres,monkeypatch):
@@ -241,3 +258,54 @@ def test_database_disconnect_keeps_previous_mirror_and_can_retry(tmp_path,postgr
     monkeypatch.setattr(postgres_sync,'records',original)
     second=postgres_sync.sync_records(store,postgres)
     assert second['receipt_id']!=first['receipt_id']
+
+
+@pytest.mark.parametrize('phase', ['manifest', 'receipt'])
+def test_linked_cli_import_excludes_catalog_writers_until_local_receipt(tmp_path,postgres,monkeypatch,phase):
+    from facts import handoff
+    import io
+    import sys
+    root=tmp_path/'restored';bundle=tmp_path/'bundle'
+    store=Store(tmp_path/'source');add_topic(store);store.db.close()
+    snapshot=handoff.backup(tmp_path/'source',bundle)['snapshot']
+    handoff.restore(bundle,snapshot,root)
+    for key,value in {'FACTS_S3_ENDPOINT':'https://fixture.invalid','FACTS_S3_BUCKET':'evidence',
+        'FACTS_S3_ACCESS_KEY_ID':'fixture','FACTS_S3_SECRET_ACCESS_KEY':'fixture'}.items():
+        monkeypatch.setenv(key,value)
+    receipt=tmp_path/'receipt.json'
+    handoff.journal(receipt,{'snapshot':snapshot,'destination':'s3:fixture.invalid/evidence/facts-v1',
+        'verified_objects':len({f['sha256'] for f in handoff.load_manifest(bundle,snapshot)['files']}),
+        'verified_at':'2026-10-26T00:00:00Z'})
+    writer='''import sqlite3,sys
+from pathlib import Path
+from facts.runtime import writer_lock
+with writer_lock(sys.argv[1]):
+    with sqlite3.connect(Path(sys.argv[1])/'storage/catalog.sqlite') as db:
+        db.execute("UPDATE topics SET payload='{}'")
+'''
+    attempts=[]
+    def competing_writer():
+        result=subprocess.run([sys.executable,'-c',writer,str(root)],capture_output=True,text=True)
+        attempts.append(result)
+    def remote_manifest(self,key):
+        assert key==handoff.manifest_key(snapshot)
+        if phase=='manifest': competing_writer()
+        return io.BytesIO((bundle/key).read_bytes())
+    monkeypatch.setattr('facts.artifact_store.S3Store.open',remote_manifest)
+    original=handoff.journal
+    def local_receipt(path,value):
+        if phase=='receipt': competing_writer()
+        original(path,value)
+    monkeypatch.setattr(handoff,'journal',local_receipt)
+    monkeypatch.setenv('FACTS_DATABASE_URL',postgres.info.dsn)
+    monkeypatch.setattr('sys.argv',['facts.postgres_sync','--apply','--root',str(root),
+        '--snapshot',snapshot,'--bundle',str(bundle),'--artifact-receipt',str(receipt)])
+    postgres_sync.main()
+    assert len(attempts)==1
+    assert attempts[0].returncode!=0 and 'Another collector/backup writer' in attempts[0].stderr
+    assert postgres.execute("SELECT payload->'payload'->>'title' FROM facts.records WHERE kind='topics'").fetchone()[0]=='before'
+    assert postgres.execute('SELECT artifact_manifest FROM facts.import_receipts').fetchone()[0]==snapshot
+    assert len(list((root/'storage/deliveries/postgres').rglob('*.json')))==1
+    # The importer releases ownership after the receipt, allowing the next writer.
+    result=subprocess.run([sys.executable,'-c',writer,str(root)],capture_output=True,text=True)
+    assert result.returncode==0

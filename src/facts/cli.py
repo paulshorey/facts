@@ -1,5 +1,6 @@
 import argparse
 import json
+from .runtime import exclusive_writer
 from .core import Store, search, capture_sources, fallback_extract, normalize, export, status, import_packet, repair_truncated
 
 
@@ -16,7 +17,10 @@ def main():
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--pilot", action="store_true")
     parser.add_argument("--incremental", action="store_true", help="Continue cached organization work (also the default)")
-    parser.add_argument("--max-cost-usd", type=float, default=10)
+    parser.add_argument("--max-cost-usd", type=float)
+    parser.add_argument("--input-usd-per-million", type=float)
+    parser.add_argument("--output-usd-per-million", type=float)
+    parser.add_argument("--existing-only", action="store_true", help="Process only the existing extraction queue")
     parser.add_argument("--model")
     parser.add_argument("--no-llm", action="store_true")
     parser.add_argument("--cached-only", action="store_true", help="Replay saved semantic/grouping output; prohibit provider submissions")
@@ -31,8 +35,14 @@ def main():
     parser.add_argument("--date-to")
     parser.add_argument("--period")
     args = parser.parse_args()
-    if (args.dry_run or args.pilot or args.incremental or args.no_llm or args.model or args.retry_failed or args.cached_only) and args.command != "organize":
+    if (args.dry_run or args.pilot or args.incremental or args.no_llm or args.model or args.cached_only) and args.command != "organize":
         parser.error("Organization processing options require the organize command")
+    if args.retry_failed and args.command not in {"organize", "normalize"}:
+        parser.error("--retry-failed requires organize or normalize")
+    if args.command == "normalize" and (args.topic == "all" or args.limit <= 0 or args.max_cost_usd is None):
+        parser.error("normalize requires one --topic, positive --limit and explicit --max-cost-usd")
+    if (args.existing_only or args.input_usd_per_million is not None or args.output_usd_per_million is not None) and args.command != "normalize":
+        parser.error("Extraction rates/--existing-only require normalize")
     if args.dry_run and args.pilot:
         parser.error("Choose --dry-run or --pilot")
     if args.organized and args.command != "export":
@@ -44,7 +54,7 @@ def main():
     if args.command == "organize":
         from .core import dumps
         from .organize import organize
-        options = {"dry_run": args.dry_run, "pilot": args.pilot, "maximum": args.max_cost_usd,
+        options = {"dry_run": args.dry_run, "pilot": args.pilot, "maximum": 10 if args.max_cost_usd is None else args.max_cost_usd,
                    "workers": args.workers or 2, "use_llm": not args.no_llm, "retry_failed": args.retry_failed, "cached_only": args.cached_only}
         if args.model:
             options["model"] = args.model
@@ -65,12 +75,20 @@ def main():
         for value in query_series(topic=args.topic, period=args.period, basis=args.basis, limit=args.limit or 20):
             print(dumps(value))
         return
+    return collector_command(args)
+
+
+@exclusive_writer
+def collector_command(args):
     store = Store()
     store.load_topics()
     if args.command == "search": search(store, args.topic, args.limit, args.workers or 4)
     elif args.command == "capture": capture_sources(store, args.topic, args.limit or 200, args.workers or 6)
     elif args.command == "fallback": fallback_extract(store, args.topic, args.limit or 100)
-    elif args.command == "normalize": normalize(store, args.topic, args.limit or 100, args.workers or 2)
+    elif args.command == "normalize":
+        print(json.dumps(normalize(store, args.topic, args.limit, args.workers or 2,
+            maximum=args.max_cost_usd, input_rate=args.input_usd_per_million,
+            output_rate=args.output_usd_per_million, retry_failed=args.retry_failed, existing_only=args.existing_only)))
     elif args.command == "repair-truncated": repair_truncated(store, args.topic)
     elif args.command == "export": export(store, args.topic)
     elif args.command == "import": import_packet(store, args.topic, args.file)
