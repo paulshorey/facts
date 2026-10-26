@@ -77,3 +77,23 @@ def test_cli_rejects_implicit_budget_and_topic_before_store_initialization(monke
     monkeypatch.setattr(cli,'Store',forbidden)
     with pytest.raises(SystemExit) as error:cli.main()
     assert error.value.code==2
+
+
+@pytest.mark.parametrize('failure', [TimeoutError('response lost'), ValueError('malformed response')])
+def test_ambiguous_provider_failure_remains_running_even_with_explicit_retry(queue, monkeypatch, failure):
+    calls=[]
+    def request(text, *args, **kwargs):
+        calls.append(text)
+        if text == 'source text 1': raise failure
+        return {}, core.Extraction(items=[]), None
+    monkeypatch.setattr(core, 'llm_extract', request)
+    options=dict(maximum=1, input_rate='.15', output_rate='.5', existing_only=True)
+    report=core.normalize(queue, 'topic', 3, 1, **options)
+    assert tuple(queue.db.execute("SELECT state,attempts FROM extraction_jobs WHERE id='1'").fetchone()) == ('running', 1)
+    assert report['state'] == 'provider_uncertain'
+    assert calls == ['source text 1']
+    assert queue.db.execute("SELECT state FROM extraction_jobs WHERE id='2'").fetchone()[0] == 'queued'
+    assert queue.db.execute("SELECT count(*) FROM attempts WHERE stage='normalize_reservation'").fetchone()[0] == 1
+    core.normalize(queue, 'topic', 3, 1, retry_failed=True, **options)
+    assert calls == ['source text 1', 'source text 0', 'source text 2']
+    assert queue.db.execute("SELECT state FROM extraction_jobs WHERE id='1'").fetchone()[0] == 'running'
