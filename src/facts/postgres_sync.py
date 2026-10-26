@@ -94,6 +94,10 @@ def sync_records(store, connection, *, artifact_manifest=None):
         # not itself protect first-time schema creation or lock upgrades.
         connection.execute('SELECT pg_advisory_xact_lock(%s,%s)', SYNC_LOCK)
         connection.execute(SCHEMA)
+        previous = connection.execute('''SELECT r.artifact_manifest FROM facts.mirror_state s
+            JOIN facts.import_receipts r ON r.id=s.receipt_id WHERE s.id='current' ''').fetchone()
+        if artifact_manifest is None and previous and previous[0] is not None:
+            raise ValueError('A linked mirror cannot be downgraded to an unlinked import')
         # Serialize mirror writers before taking the local snapshot. Ordinary
         # PostgreSQL readers still see the previous committed mirror during COPY.
         connection.execute('LOCK TABLE facts.records IN SHARE ROW EXCLUSIVE MODE')
@@ -150,6 +154,23 @@ def dry_run(store):
             'artifacts': 'local; not uploaded'}
 
 
+def validate_delivery(root, bundle, snapshot, receipt_path, destination):
+    from .handoff import load_manifest, verify
+    from .artifact_store import digest_file
+    if not destination.startswith('s3:'):
+        raise ValueError('Operational database imports require the configured S3 replica')
+    manifest=load_manifest(bundle,snapshot);verify(bundle,snapshot)
+    catalog=next(f for f in manifest['files'] if f['path']=='storage/catalog.sqlite')
+    if digest_file(Path(root)/'storage/catalog.sqlite') != (catalog['sha256'],catalog['size']):
+        raise ValueError('Sync a restored snapshot root to link its artifact manifest')
+    receipt=json.loads(Path(receipt_path).read_text())
+    if (receipt.get('snapshot') != snapshot or not receipt.get('verified_at')
+            or receipt.get('destination') != destination
+            or type(receipt.get('verified_objects')) is not int
+            or receipt['verified_objects'] != len({f['sha256'] for f in manifest['files']})):
+        raise ValueError('Artifact delivery receipt does not match this snapshot and S3 destination')
+
+
 def main():
     p=argparse.ArgumentParser();p.add_argument('--apply',action='store_true')
     p.add_argument('--root',type=Path,default=ROOT)
@@ -157,6 +178,8 @@ def main():
     p.add_argument('--snapshot')
     p.add_argument('--artifact-receipt',type=Path)
     args=p.parse_args()
+    if args.apply and not (args.snapshot and args.bundle and args.artifact_receipt):
+        p.error('--apply requires --snapshot, --bundle and the configured S3 --artifact-receipt')
     from .organize_store import OrganizedStore
     # Reading counts should not initialize tables or alter collection state.
     s=OrganizedStore(args.root,readonly=True)
@@ -164,18 +187,13 @@ def main():
         if not args.apply:
             print(json.dumps(dry_run(s),indent=2));return
         if args.snapshot:
-            from .handoff import load_manifest, verify
-            from .artifact_store import digest_file
-            if not args.bundle or not args.artifact_receipt:
-                raise ValueError('A snapshot requires its verified bundle and artifact delivery receipt')
-            manifest=load_manifest(args.bundle,args.snapshot);verify(args.bundle,args.snapshot)
-            catalog=next(f for f in manifest['files'] if f['path']=='storage/catalog.sqlite')
-            if digest_file(args.root/'storage/catalog.sqlite') != (catalog['sha256'],catalog['size']):
-                raise ValueError('Sync a restored snapshot root to link its artifact manifest')
-            receipt=json.loads(args.artifact_receipt.read_text())
-            if (receipt['snapshot'] != args.snapshot or not receipt.get('verified_at')
-                    or receipt['verified_objects'] != len({f['sha256'] for f in manifest['files']})):
-                raise ValueError('Artifact delivery receipt does not match this snapshot')
+            from .artifact_store import DirectoryStore, S3Store, digest_file, verify_object
+            from .handoff import manifest_key
+            replica=S3Store()
+            validate_delivery(args.root,args.bundle,args.snapshot,args.artifact_receipt,replica.identity)
+            key=manifest_key(args.snapshot)
+            digest,size=digest_file(DirectoryStore(args.bundle).path(key))
+            verify_object(replica,key,digest,size)
         elif args.artifact_receipt or args.bundle:
             raise ValueError('Artifact options require --snapshot')
         import psycopg

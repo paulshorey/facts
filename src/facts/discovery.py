@@ -3,9 +3,11 @@ import json
 import re
 from urllib.parse import urljoin, urlsplit
 
+from .runtime import exclusive_writer
 from .core import canonical_url, dumps, ident
 
 
+@exclusive_writer
 def follow_links(store, topic, limit=150):
     rows = store.db.execute("SELECT DISTINCT s.id,s.url,c.artifact,c.text_artifact,c.metadata FROM sources s JOIN topic_sources t ON t.source=s.id JOIN captures c ON c.source=s.id WHERE t.topic=? AND c.level IN ('direct_http','provider_extract') AND c.state='succeeded'", (topic,)).fetchall()
     found = 0
@@ -43,6 +45,7 @@ def follow_links(store, topic, limit=150):
     print(f'{topic}: queued {found} new linked sources')
 
 
+@exclusive_writer
 def expand_followups(store, topic, limit=15):
     rows=store.db.execute('SELECT query,origin FROM followups WHERE topic=? ORDER BY rowid', (topic,)).fetchall()
     prepared = 0
@@ -57,9 +60,13 @@ def expand_followups(store, topic, limit=15):
     print(f'{topic}: prepared {prepared} follow-up searches')
 
 
-if __name__ == '__main__':
+@exclusive_writer
+def main():
     import argparse
     from .core import Store
     p=argparse.ArgumentParser();p.add_argument('mode',choices=['links','followups']);p.add_argument('--topic',required=True);p.add_argument('--limit',type=int,default=100)
     a=p.parse_args();s=Store()
     (follow_links if a.mode=='links' else expand_followups)(s,a.topic,a.limit)
+
+
+if __name__ == "__main__": main()

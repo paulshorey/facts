@@ -11,6 +11,7 @@ import openpyxl
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from .runtime import exclusive_writer
 from .core import Store, dumps, ident, now, retrieve
 
 TOPIC = "us-federal-spending"
@@ -127,6 +128,7 @@ def workbook(store, url, title=None):
     book.close()
 
 
+@exclusive_writer
 def run(store, all_omb=False):
     treasury(store)
     manifest = store.root / "storage/bootstrap/isolated-web-preflight.omb-downloads.json"
@@ -151,7 +153,8 @@ def run(store, all_omb=False):
             print(f"Dataset failed {url}: {type(error).__name__}", flush=True)
 
 
-if __name__ == "__main__":
+@exclusive_writer
+def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--all-omb", action="store_true")
@@ -159,3 +162,6 @@ if __name__ == "__main__":
     store = Store()
     store.load_topics()
     run(store, args.all_omb)
+
+
+if __name__ == "__main__": main()

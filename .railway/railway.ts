@@ -11,6 +11,8 @@ export default defineRailway((ctx) => {
     DATABASE_PUBLIC_URL: { type: "literal", value:
       "postgresql://${{PGUSER}}:${{POSTGRES_PASSWORD}}@${{RAILWAY_TCP_PROXY_DOMAIN}}:${{RAILWAY_TCP_PROXY_PORT}}/${{PGDATABASE}}?sslmode=require" },
   };
+  // Preserve the imported product-managed volume. This declaration is not an
+  // attachment: postgres() owns that. Check live identity before any apply.
   const data = volume("postgres-volume", {
     region: "us-east4-eqdc4a", sizeMB: 50000, allowOnlineResize: true,
     alerts: { usage: { "80": {}, "95": {}, "100": {} } },

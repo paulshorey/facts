@@ -8,6 +8,7 @@ from collections import Counter
 from pathlib import Path
 
 from .contracts import VERSION, Observation, SeriesDefinition, EntityDefinition, GroupDefinition
+from .runtime import exclusive_writer
 from .core import ROOT, dumps, ident, now
 from .organize_store import OrganizedStore
 
@@ -18,6 +19,7 @@ def write_json(path, value):
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2, default=str)+"\n")
 
 
+@exclusive_writer
 def export_organized(root=ROOT, topic="all"):
     store = OrganizedStore(root, readonly=True)
     store.db.execute("BEGIN")

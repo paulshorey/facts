@@ -16,6 +16,7 @@ from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 import httpx
 from pydantic import BaseModel, Field
+from .runtime import exclusive_writer
 
 ROOT = Path(__file__).resolve().parents[2]
 PROMPT_VERSION = "items-v1"
@@ -189,6 +190,7 @@ def parallel_search(payload):
         return response.json()
 
 
+@exclusive_writer
 def search(store, topic="all", limit=0, workers=4):
     store.load_topics()
     rows = store.db.execute("SELECT * FROM searches WHERE state IN ('queued','failed')" + (" AND topic=?" if topic != "all" else "") + " ORDER BY rowid", (() if topic == "all" else (topic,))).fetchall()
@@ -263,6 +265,7 @@ def retrieve(url):
     raise ValueError("redirect limit exceeded")
 
 
+@exclusive_writer
 def capture_sources(store, topic="all", limit=200, workers=6):
     query = "SELECT DISTINCT s.* FROM sources s JOIN topic_sources t ON t.source=s.id WHERE NOT EXISTS (SELECT 1 FROM captures c WHERE c.source=s.id AND c.level='direct_http')"
     if topic != "all":
@@ -291,6 +294,7 @@ def provider_extract(urls):
         return response.json()
 
 
+@exclusive_writer
 def fallback_extract(store, topic="all", limit=100):
     query = "SELECT DISTINCT s.* FROM sources s JOIN topic_sources t ON t.source=s.id WHERE NOT EXISTS (SELECT 1 FROM captures c WHERE c.source=s.id AND c.state='succeeded' AND c.level IN ('direct_http','provider_extract') AND c.text_artifact IS NOT NULL)"
     if topic != "all":
@@ -333,6 +337,7 @@ def chunks(text, size=14000):
         start = max(start+1, end-400)
 
 
+@exclusive_writer
 def queue_extraction(store, topic="all", level="best", max_chunks=0):
     topics = store.db.execute("SELECT * FROM topics" + (" WHERE id=?" if topic != "all" else ""), (() if topic == "all" else (topic,))).fetchall()
     count = 0
@@ -363,10 +368,14 @@ Each item needs a short useful title and 1-3 sentence detail. original_text is a
 """
 
 
-def llm_extract(chunk, topic, max_tokens=6500):
+def extraction_body(chunk, topic, max_tokens=6500):
     schema = Extraction.model_json_schema()
-    body = {"model": MODEL, "messages": [{"role": "system", "content": EXTRACTION_PROMPT}, {"role": "user", "content": dumps({"topic": topic, "source_text": chunk})}], "temperature": 0, "max_tokens": max_tokens,
+    return {"model": MODEL, "messages": [{"role": "system", "content": EXTRACTION_PROMPT}, {"role": "user", "content": dumps({"topic": topic, "source_text": chunk})}], "temperature": 0, "max_tokens": max_tokens,
             "response_format": {"type": "json_schema", "json_schema": {"name": "Extraction", "schema": schema}}, "reasoning_effort": 256}
+
+
+def llm_extract(chunk, topic, max_tokens=6500, *, body=None):
+    body = body or extraction_body(chunk, topic, max_tokens)
     with httpx.Client(timeout=150) as client:
         request_history=[]
         for attempt in range(3):
@@ -391,37 +400,15 @@ def llm_extract(chunk, topic, max_tokens=6500):
         return data, None, "invalid_json_schema"
 
 
-def normalize(store, topic="all", limit=100, workers=2):
-    queue_extraction(store, topic)
-    sql = "SELECT j.*,t.payload topic_payload,c.source FROM extraction_jobs j JOIN topics t ON t.id=j.topic JOIN captures c ON c.id=j.capture WHERE j.state IN ('queued','failed') AND j.attempts<2"
-    if topic != "all":
-        sql += " AND j.topic=?"
-    rows = store.db.execute(sql + " ORDER BY CASE j.state WHEN 'failed' THEN 0 ELSE 1 END,j.chunk,j.rowid LIMIT ?", ((limit,) if topic == "all" else (topic, limit))).fetchall()
-    with futures.ThreadPoolExecutor(max_workers=workers) as pool:
-        pending = {pool.submit(llm_extract, store.read(row["text_artifact"]), {k: v for k, v in json.loads(row["topic_payload"]).items() if k != "searches"}): row for row in rows}
-        for i, future in enumerate(futures.as_completed(pending), 1):
-            row = pending[future]
-            try:
-                raw, parsed, error = future.result()
-                artifact = store.put(raw)
-                if error:
-                    split = split_job(store, row) if error == 'output_truncated' else []
-                    store.db.execute("UPDATE extraction_jobs SET state=?, attempts=attempts+1,artifact=?,error=? WHERE id=?", ('split' if split else 'failed', artifact, error, row["id"]))
-                else:
-                    for index, item in enumerate(parsed.items):
-                        store.item(row["topic"], row["source"], row["capture"], item.model_dump(), {"type": "extracted_chunk", "job_id": row["id"], "chunk": row["chunk"], "ordinal": index, "prompt_version": PROMPT_VERSION, "model": MODEL})
-                    for query in parsed.followup_queries:
-                        store.db.execute("INSERT OR IGNORE INTO followups VALUES (?,?,?)", (row["topic"], query, row["id"]))
-                    store.db.execute("UPDATE extraction_jobs SET state='succeeded', attempts=attempts+1,artifact=?,error=NULL WHERE id=?", (artifact, row["id"]))
-                store.attempt("normalize", row["id"], "failed" if error else "succeeded", artifact, {"usage": raw.get("usage"), "model": MODEL, "error": error})
-                print(f"normalize {i}/{len(rows)} {row['topic']} chunk {row['chunk']}: {error or str(len(parsed.items))+' items'}", flush=True)
-            except Exception as error:
-                message = f"{type(error).__name__}: {str(error)[:400]}"
-                store.db.execute("UPDATE extraction_jobs SET state='failed',attempts=attempts+1,error=? WHERE id=?", (message, row["id"]))
-                print(f"normalize FAILED: {message}", flush=True)
-            store.db.commit()
+@exclusive_writer
+def normalize(store, topic="all", limit=100, workers=2, *, maximum=None,
+              input_rate=None, output_rate=None, retry_failed=False, existing_only=False):
+    from .extraction import collect
+    return collect(store, topic, limit, workers, maximum=maximum, input_rate=input_rate,
+                   output_rate=output_rate, retry_failed=retry_failed, existing_only=existing_only)
 
 
+@exclusive_writer
 def import_packet(store, topic, path):
     data = json.loads(Path(path).read_text())
     artifact = store.put(data)
@@ -512,6 +499,7 @@ def split_job(store, row):
     return ids
 
 
+@exclusive_writer
 def repair_truncated(store, topic='all'):
     rows=store.db.execute("SELECT * FROM extraction_jobs WHERE state='failed' AND error='output_truncated'" + (' AND topic=?' if topic!='all' else ''), (() if topic=='all' else (topic,))).fetchall()
     for row in rows:
@@ -537,6 +525,7 @@ def status(store):
     return report
 
 
+@exclusive_writer
 def export(store, topic="all"):
     report = status(store)
     topics = list(report["topics"]) if topic == "all" else [topic]
@@ -570,6 +559,7 @@ def export(store, topic="all"):
     return report
 
 
+@exclusive_writer
 def normalize_catalog_kinds(store):
     rows=store.db.execute('SELECT id,kind,payload FROM items').fetchall()
     changed=0

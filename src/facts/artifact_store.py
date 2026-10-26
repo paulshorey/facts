@@ -1,4 +1,4 @@
-"""Private immutable-key delivery. Credentials never enter manifests or receipts."""
+"""Private content-addressed delivery; provider storage is not object-locked."""
 from __future__ import annotations
 
 import hashlib
@@ -64,6 +64,24 @@ class DirectoryStore:
             finally:
                 temporary.unlink(missing_ok=True)
 
+    def keys(self, prefix):
+        folder = self.path(prefix)
+        for path in sorted(folder.rglob('*')):
+            if path.is_file():
+                key = path.relative_to(self.root).as_posix(); self.path(key)
+                yield key
+
+    def replace_file(self, key, source):
+        """Explicit repair only; ordinary delivery never calls this."""
+        target = self.path(key); target.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=target.parent, delete=False) as stream:
+            temporary = Path(stream.name)
+            try:
+                with Path(source).open('rb') as original:
+                    while chunk := original.read(1024*1024): stream.write(chunk)
+                stream.flush(); os.fsync(stream.fileno()); temporary.replace(target)
+            finally: temporary.unlink(missing_ok=True)
+
 
 class S3Store:
     def __init__(self, environ=None):
@@ -74,12 +92,13 @@ class S3Store:
         if any(not env.get(k) for k in names):
             raise ValueError('Configure the four FACTS_S3 connection variables')
         endpoint = urlsplit(env['FACTS_S3_ENDPOINT'])
-        if endpoint.scheme != 'https' or not endpoint.hostname or endpoint.username or endpoint.password or endpoint.query or endpoint.fragment:
-            raise ValueError('Artifact endpoint must be credential-free HTTPS')
+        if (endpoint.scheme != 'https' or not endpoint.hostname or endpoint.username or endpoint.password
+                or endpoint.query or endpoint.fragment or endpoint.path not in {'','/'}):
+            raise ValueError('Artifact endpoint must be a credential-free HTTPS origin')
         self.bucket = env['FACTS_S3_BUCKET']
         self.prefix = env.get('FACTS_S3_PREFIX', 'facts-v1').strip('/')
         safe_path(self.prefix)
-        self.identity = f's3:{endpoint.hostname}/{self.bucket}/{self.prefix}'
+        self.identity = f's3:{endpoint.netloc.lower()}/{self.bucket}/{self.prefix}'
         self.client = boto3.client('s3', endpoint_url=env['FACTS_S3_ENDPOINT'],
             aws_access_key_id=env['FACTS_S3_ACCESS_KEY_ID'], aws_secret_access_key=env['FACTS_S3_SECRET_ACCESS_KEY'],
             region_name=env.get('FACTS_S3_REGION', 'auto'),
@@ -109,6 +128,19 @@ class S3Store:
             if error.response.get('Error', {}).get('Code') in {'PreconditionFailed', '412'}:
                 return False
             raise RuntimeError('Artifact upload failed') from None
+
+    def keys(self, prefix):
+        start = self.key(prefix) + '/'
+        for page in self.client.get_paginator('list_objects_v2').paginate(Bucket=self.bucket, Prefix=start):
+            for item in page.get('Contents', []):
+                if not item['Key'].startswith(start): raise ValueError('Unexpected listing prefix')
+                key = item['Key'][len(self.prefix)+1:]; safe_path(key)
+                yield key
+
+    def replace_file(self, key, source):
+        """Explicit repair only, after quarantine; no provider CAS is claimed."""
+        with Path(source).open('rb') as body:
+            self.client.put_object(Bucket=self.bucket, Key=self.key(key), Body=body)
 
 
 def verify_object(store, key, digest, size):

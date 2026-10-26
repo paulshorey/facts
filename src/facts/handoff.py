@@ -1,4 +1,4 @@
-"""Verified portable snapshots, immutable delivery and isolated restoration."""
+"""Verified portable snapshots, replica delivery and isolated restoration."""
 from __future__ import annotations
 
 import argparse
@@ -12,12 +12,17 @@ import shutil
 import sqlite3
 import sys
 import tempfile
+from uuid import uuid4
 
 from .artifact_store import DirectoryStore, S3Store, digest_file, ensure_object, safe_path, verify_object
 from .core import ROOT, dumps, now
+from .runtime import exclusive_writer
 
-VERSION = 'handoff.v1'
+VERSION = 'handoff.v2'
 PRESERVED_TABLES = ('topics', 'searches', 'sources', 'topic_sources', 'captures', 'items', 'datasets', 'extraction_jobs', 'followups', 'attempts')
+# Frozen contracts for published v1 snapshots, independent of future writer tables.
+V1_REQUIRED = frozenset(('topics', 'searches', 'sources', 'topic_sources', 'captures', 'items', 'datasets', 'extraction_jobs', 'followups'))
+V1_ALLOWED = V1_REQUIRED | {'attempts'}
 
 
 def object_key(digest):
@@ -42,13 +47,14 @@ def journal(path, value):
             temp.unlink(missing_ok=True)
 
 
-def catalog_fingerprint(database, tables=PRESERVED_TABLES):
+def catalog_fingerprint(database, tables=None):
     result = {}
+    if tables is None: tables = PRESERVED_TABLES
     for table in tables:
-        if table not in PRESERVED_TABLES:
-            raise ValueError('Unknown original catalog table')
+        if not re.fullmatch(r'[A-Za-z_][A-Za-z_0-9]*', table):
+            raise ValueError('Invalid original catalog table')
         digest = hashlib.sha256(); count = 0
-        for row in database.execute(f'SELECT * FROM {table} ORDER BY rowid'):
+        for row in database.execute(f'SELECT * FROM "{table}" ORDER BY rowid'):
             digest.update(dumps(list(row)).encode()); digest.update(b'\n'); count += 1
         result[table] = {'count': count, 'sha256': digest.hexdigest()}
     return result
@@ -82,13 +88,18 @@ def catalog_artifacts(database):
 
 def load_manifest(bundle, snapshot):
     path = DirectoryStore(bundle).path(manifest_key(snapshot))
-    payload = json.loads(path.read_text())
-    if payload.get('schema_version') != VERSION or hashlib.sha256(dumps(payload).encode()).hexdigest() != snapshot:
+    raw = path.read_bytes(); payload = json.loads(raw)
+    version = payload.get('schema_version')
+    if version not in {'handoff.v1', VERSION} or hashlib.sha256(raw).hexdigest() != snapshot:
         raise ValueError('Invalid handoff manifest identity')
-    # Early v1 snapshots did not include the append-only attempts fingerprint.
-    # Their catalog bytes are still verified; never invalidate an existing backup
-    # merely because the fingerprint inventory gains a table.
-    if not set(PRESERVED_TABLES)-{'attempts'} <= set(payload['original_tables']) <= set(PRESERVED_TABLES):
+    tables = set(payload['original_tables'])
+    if version == 'handoff.v1':
+        valid_inventory = V1_REQUIRED <= tables <= V1_ALLOWED
+    else:
+        inventory = payload.get('original_table_inventory', [])
+        valid_inventory = (isinstance(inventory, list) and len(inventory) == len(set(inventory))
+                           and tables == set(inventory) and V1_REQUIRED <= tables)
+    if not valid_inventory or any(not re.fullmatch(r'[A-Za-z_][A-Za-z_0-9]*', name) for name in tables):
         raise ValueError('Invalid original catalog inventory')
     seen = set(); sizes = {}
     for item in payload['files']:
@@ -111,6 +122,7 @@ def load_manifest(bundle, snapshot):
     return payload
 
 
+@exclusive_writer
 def backup(root=ROOT, bundle=None):
     root = Path(root).resolve(); bundle = Path(bundle or root / 'storage/handoffs').resolve()
     if root.is_relative_to(bundle) or (bundle.is_relative_to(root) and not bundle.is_relative_to(root/'storage/handoffs')):
@@ -152,7 +164,8 @@ def backup(root=ROOT, bundle=None):
             files.append({'path': relative, 'sha256': digest, 'size': size})
         if required_artifacts - {item['path'] for item in files}:
             raise ValueError('Backup is missing catalog-referenced artifacts')
-        payload = {'schema_version': VERSION, 'created_at': now(), 'files': files, 'original_tables': original}
+        payload = {'schema_version': VERSION, 'created_at': now(), 'files': files,
+                   'original_tables': original, 'original_table_inventory': list(original)}
         identity = hashlib.sha256(dumps(payload).encode()).hexdigest()
         candidate = Path(scratch) / 'manifest.json'; candidate.write_text(dumps(payload))
         digest, size = digest_file(candidate)
@@ -195,6 +208,7 @@ def restore(bundle, snapshot, destination):
     return {'snapshot': snapshot, 'restored_files': len(payload['files']), 'integrity': 'ok'}
 
 
+@exclusive_writer
 def deliver(bundle, snapshot, remote, workers=4, progress=None):
     if workers not in range(1, 33):
         raise ValueError('Use one through thirty-two delivery workers')
@@ -217,6 +231,65 @@ def deliver(bundle, snapshot, remote, workers=4, progress=None):
     identity = hashlib.sha256(remote.identity.encode()).hexdigest()[:16]
     journal(Path(bundle) / 'receipts' / snapshot / (identity+'.json'), receipt)
     return receipt
+
+
+def list_snapshots(store):
+    """Discovery only: listings do not prove completeness or object integrity."""
+    entries = []
+    for key in store.keys('manifests'):
+        match = re.fullmatch(r'manifests/([0-9a-f]{64})\.json', key)
+        if not match: continue
+        with store.open(key) as stream: raw = stream.read()
+        value = json.loads(raw)
+        if hashlib.sha256(raw).hexdigest() != match[1]:
+            raise ValueError('Listed manifest identity mismatch')
+        entries.append({'snapshot': match[1], 'created_at': value.get('created_at'),
+                        'files': len(value['files']), 'schema_version': value.get('schema_version')})
+    return {'destination': store.identity, 'snapshots': entries,
+            'listing_is_authoritative': False, 'object_bytes_verified': False}
+
+
+@exclusive_writer
+def repair(bundle, snapshot, remote, digest=None):
+    """Replace only a damaged replica key from a verified bundle, preserving damage."""
+    payload = load_manifest(bundle, snapshot); verify(bundle, snapshot)
+    local = DirectoryStore(bundle)
+    if digest is None:
+        key = manifest_key(snapshot)
+    else:
+        if digest not in {f['sha256'] for f in payload['files']}:
+            raise ValueError('Repair digest is outside this snapshot')
+        key = object_key(digest)
+    source = local.path(key); expected, size = digest_file(source)
+    try:
+        verify_object(remote, key, expected, size)
+        return {'snapshot': snapshot, 'key': key, 'state': 'already_valid'}
+    except FileNotFoundError:
+        ensure_object(remote, key, source, expected, size)
+        result = {'snapshot': snapshot, 'key': key, 'state': 'restored_missing', 'destination': remote.identity}
+    except ValueError:
+        folder = Path(bundle)/'quarantine'/uuid4().hex; folder.mkdir(parents=True, mode=0o700)
+        damaged = folder/'damaged-object'
+        with remote.open(key) as original, damaged.open('xb') as stream:
+            damaged.chmod(0o600); shutil.copyfileobj(original, stream)
+            stream.flush(); os.fsync(stream.fileno())
+        observed = digest_file(damaged)
+        result = {'snapshot': snapshot, 'key': key, 'destination': remote.identity,
+                  'observed_sha256': observed[0], 'observed_size': observed[1],
+                  'expected_sha256': expected, 'quarantined_at': now(), 'state': 'quarantined'}
+        journal(folder/'repair.json', result)
+        # Detect an intervening change; this is a single-host safeguard, not CAS.
+        with tempfile.NamedTemporaryFile(dir=folder) as check:
+            with remote.open(key) as original: shutil.copyfileobj(original, check)
+            check.flush()
+            if digest_file(check.name) != observed:
+                raise ValueError('Replica changed during repair; inspect quarantine before retrying')
+        remote.replace_file(key, source)
+        verify_object(remote, key, expected, size)
+        result['state'] = 'repaired'; journal(folder/'repair.json', result)
+    result['verified_at'] = now()
+    journal(Path(bundle)/'repairs'/snapshot/(uuid4().hex+'.json'), result)
+    return result
 
 
 def receive(bundle, snapshot, remote, workers=4, progress=None):
@@ -261,17 +334,29 @@ def receive(bundle, snapshot, remote, workers=4, progress=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=['backup', 'verify', 'restore', 'deliver', 'receive'])
+    parser.add_argument('command', choices=['backup', 'verify', 'restore', 'deliver', 'receive', 'list', 'repair'])
     parser.add_argument('--root', type=Path, default=ROOT)
     parser.add_argument('--bundle', type=Path)
     parser.add_argument('--snapshot')
     parser.add_argument('--destination', type=Path)
     parser.add_argument('--remote-directory', type=Path, help='Use a filesystem mirror instead of configured S3')
     parser.add_argument('--workers', type=int, default=8)
+    parser.add_argument('--remote', action='store_true', help='List configured S3 rather than the local bundle')
+    parser.add_argument('--object-digest', help='Repair this file digest; omit to repair the snapshot manifest')
+    parser.add_argument('--confirm-repair', action='store_true', help='Explicitly replace only a quarantined damaged replica key')
     args = parser.parse_args(); bundle = args.bundle or args.root / 'storage/handoffs'
+    if args.remote and args.command != 'list':
+        parser.error('--remote applies to list; use receive for independent remote verification')
+    if (args.object_digest or args.confirm_repair) and args.command != 'repair':
+        parser.error('Repair options require repair')
+    if args.remote_directory and args.command not in {'list','deliver','receive','repair'}:
+        parser.error('--remote-directory requires a replica operation')
     try:
         if args.command == 'backup':
             result = backup(args.root, bundle)
+        elif args.command == 'list':
+            selected = (DirectoryStore(args.remote_directory) if args.remote_directory else S3Store()) if args.remote or args.remote_directory else DirectoryStore(bundle)
+            result = list_snapshots(selected)
         else:
             if not args.snapshot:
                 parser.error('--snapshot is required')
@@ -281,6 +366,9 @@ def main():
                 result = restore(bundle, args.snapshot, args.destination)
             else:
                 remote = DirectoryStore(args.remote_directory) if args.remote_directory else S3Store()
+                if args.command == 'repair':
+                    if not args.confirm_repair: parser.error('repair requires --confirm-repair')
+                    print(json.dumps(repair(bundle, args.snapshot, remote, args.object_digest), indent=2)); return
                 def progress(done, total):
                     if done % 100 == 0 or done == total:
                         print(f'{args.command}: verified {done}/{total} objects', file=sys.stderr, flush=True)

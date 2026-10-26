@@ -10,6 +10,7 @@ from pathlib import Path
 import pyarrow.parquet as pq
 
 from .contracts import PROMPT_VERSION, TAXONOMY_VERSION, VERSION, Observation
+from .runtime import exclusive_writer
 from .core import MODEL, ROOT, dumps, ident, now
 from .organize_fields import FACETS, adapt_item, measurement, parse_date, plain, pointer
 from .organize_llm import Budget, enqueue, run_jobs, settings
@@ -474,6 +475,7 @@ def enqueue_semantic(store, inputs, model):
     return ids
 
 
+@exclusive_writer
 def organize(root=ROOT, topic="all", *, dry_run=False, pilot=False, maximum=10, workers=2, model=MODEL, use_llm=True, retry_failed=False, cached_only=False):
     if cached_only and (not use_llm or retry_failed):
         raise ValueError("Cached-only organization needs cache replay and cannot retry failed inference")
