@@ -20,7 +20,9 @@ def writer_lock(root=ROOT):
         if key in _held:
             _held[key][1] += 1
         else:
-            folder = root/'storage/locks'; folder.mkdir(parents=True, exist_ok=True)
+            root.mkdir(parents=True, exist_ok=True, mode=0o700)
+            storage = root/'storage'; storage.mkdir(exist_ok=True, mode=0o700)
+            folder = storage/'locks'; folder.mkdir(exist_ok=True, mode=0o700)
             stream = (folder/'collector.lock').open('a')
             try: fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:

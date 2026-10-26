@@ -16,7 +16,7 @@ from uuid import uuid4
 
 from .artifact_store import DirectoryStore, S3Store, digest_file, ensure_object, safe_path, verify_object
 from .core import ROOT, dumps, now
-from .runtime import exclusive_writer
+from .runtime import exclusive_writer, writer_lock
 
 VERSION = 'handoff.v2'
 PRESERVED_TABLES = ('topics', 'searches', 'sources', 'topic_sources', 'captures', 'items', 'datasets', 'extraction_jobs', 'followups', 'attempts')
@@ -127,6 +127,11 @@ def backup(root=ROOT, bundle=None):
     root = Path(root).resolve(); bundle = Path(bundle or root / 'storage/handoffs').resolve()
     if root.is_relative_to(bundle) or (bundle.is_relative_to(root) and not bundle.is_relative_to(root/'storage/handoffs')):
         raise ValueError('Use storage/handoffs inside the collector or a separate external bundle')
+    with writer_lock(bundle):
+        return _backup(root, bundle)
+
+
+def _backup(root, bundle):
     store = DirectoryStore(bundle)
     with tempfile.TemporaryDirectory(prefix='.backup-', dir=bundle) as scratch:
         snapshot = Path(scratch) / 'catalog.sqlite'
@@ -292,6 +297,7 @@ def repair(bundle, snapshot, remote, digest=None):
     return result
 
 
+@exclusive_writer
 def receive(bundle, snapshot, remote, workers=4, progress=None):
     if workers not in range(1, 33):
         raise ValueError('Use one through thirty-two retrieval workers')

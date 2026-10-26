@@ -17,7 +17,10 @@ October 17 baseline. No provider/model requests for new content were submitted.
 `2bb06f6635185c5ed105b8f861a7a44a38eb9f859b3b6f37e245b271cf4fcd3c`,
 including all 13,481 files and the stricter historical/follow-up artifact inventory.
 The local bundle remains in place. This is current proof of the saved corpus and
-local snapshot; the October 17 cloud transfer/import below is historical.
+local snapshot; the October 17 cloud transfer/import below is historical. A fresh
+isolated local restore under the follow-up code also restored all 13,481 files
+and passed the same 12,477-reference audit; its original tables and active digest
+match the current corpus. The temporary drill directory was cleaned up.
 
 Current read-only PostgreSQL checks passed with TLS. The current mirror still
 references the same linked snapshot and receipt. Database size is 1,000,445,631
@@ -38,6 +41,8 @@ on the real dev database. Establish a supported disposable restore target first.
 
 Private current reports: `storage/recovery-proof/2026-10-25/merged-audit.json`,
 `merged-snapshot-verify.json`, `comparison.json` and `database-readonly.json`.
+`final-proof.json` records the exact follow-up code revision; `final-audit.json`
+and `final-restored-audit.json` retain the final corpus/restore checks.
 Implementation follow-up: [`recovery_followup_plan.md`](recovery_followup_plan.md).
 
 ## Corpus state
@@ -163,7 +168,7 @@ failure/rollback/disconnect tests used disposable local PostgreSQL databases.
 ## Validation and next work
 
 The October 17 implementation suite passed 100 tests; PR #9 increased it to 105.
-The October 25 recovery follow-up passes 126 tests, including real isolated PostgreSQL rollback,
+The October 25 recovery follow-up passes 127 tests, including real isolated PostgreSQL rollback,
 disconnect/retry, receipt atomicity and lost-local-receipt recovery. Tests also
 cover path traversal, unsafe bundle placement, missing retained evidence, object
 corruption, interrupted delivery, restore integrity and cached-only request

@@ -45,6 +45,11 @@ def test_listing_recovers_snapshot_without_latest(saved):
     assert not report['object_bytes_verified'] and not report['listing_is_authoritative']
 
 
+def test_bundle_stays_private_when_its_lock_is_created_first(saved):
+    _,bundle,_=saved
+    assert bundle.stat().st_mode & 0o777 == 0o700
+
+
 def test_manifest_bytes_are_addressed_without_silent_reformatting(saved):
     _,bundle,snapshot=saved
     path=DirectoryStore(bundle).path(handoff.manifest_key(snapshot))
@@ -119,13 +124,14 @@ def test_unavailable_remote_manifest_blocks_database_connection(saved,tmp_path,m
 
 
 def test_writer_lock_rejects_another_process_before_backup_mutates(saved):
-    root,_,_=saved
-    script='from facts.handoff import backup; import sys; backup(sys.argv[1])'
-    with writer_lock(root):
-        # Nested same-thread operations remain usable.
-        with writer_lock(root):pass
-        result=subprocess.run([sys.executable,'-c',script,str(root)],capture_output=True,text=True)
-    assert result.returncode!=0 and 'Another collector/backup writer' in result.stderr
+    root,bundle,_=saved
+    script='from facts.handoff import backup; import sys; backup(sys.argv[1],sys.argv[2])'
+    for target in [root,bundle]:
+        with writer_lock(target):
+            # Nested same-thread operations remain usable.
+            with writer_lock(target):pass
+            result=subprocess.run([sys.executable,'-c',script,str(root),str(bundle)],capture_output=True,text=True)
+        assert result.returncode!=0 and 'Another collector/backup writer' in result.stderr
 
 
 def test_s3_snapshot_listing_paginates_within_its_own_prefix():
