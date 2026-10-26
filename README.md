@@ -276,7 +276,10 @@ content-addressed receipt in `facts.import_receipts`; `facts.mirror_state` point
 to the receipt describing the current mirror. Identical logical content and
 artifact-manifest identity reuse the same receipt. The local delivery receipt is
 written only after the PostgreSQL commit. A lost local receipt is safe to recover
-by repeating the import. A failed receipt insert rolls back the mirror too.
+by repeating the import. The CLI holds the collector-wide writer lock from snapshot
+validation through the PostgreSQL commit and local receipt write, so supported
+writers cannot change the catalog between verification and import. A failed
+receipt insert rolls back the mirror too.
 Unchanged envelopes skip the upsert write, avoiding repeated JSONB/index/WAL work
 on retries. `synced_records` counts staged envelopes; `written_records` counts
 inserts/changed envelopes. Per-record `synced_at` tracks the last content import,

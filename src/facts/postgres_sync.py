@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 
 from .core import ROOT, dumps, now, ident
+from .runtime import writer_lock
 
 SCHEMA = """
 CREATE SCHEMA IF NOT EXISTS facts;
@@ -180,6 +181,13 @@ def main():
     args=p.parse_args()
     if args.apply and not (args.snapshot and args.bundle and args.artifact_receipt):
         p.error('--apply requires --snapshot, --bundle and the configured S3 --artifact-receipt')
+    # Keep the snapshot check, mirror commit and local receipt under one root owner.
+    # Read-only inspection must not create a writer lock or any storage directories.
+    with writer_lock(args.root) if args.apply else contextlib.nullcontext():
+        return _run_import(args)
+
+
+def _run_import(args):
     from .organize_store import OrganizedStore
     # Reading counts should not initialize tables or alter collection state.
     s=OrganizedStore(args.root,readonly=True)

@@ -121,6 +121,8 @@ def test_unavailable_remote_manifest_blocks_database_connection(saved,tmp_path,m
     monkeypatch.setattr('sys.argv',['postgres_sync','--apply','--root',str(root),'--snapshot',snapshot,
         '--bundle',str(bundle),'--artifact-receipt',str(receipt)])
     with pytest.raises(SystemExit,match='OSError'):postgres_sync.main()
+    # Failed verification releases ownership for a subsequent supported writer.
+    with writer_lock(root): pass
 
 
 def test_writer_lock_rejects_another_process_before_backup_mutates(saved):
