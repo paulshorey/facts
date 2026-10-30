@@ -1,8 +1,9 @@
 # Project: facts.news
 
 A local-first collector for itemized, source-backed research. Read [README.md](README.md)
-and current topic definitions before collecting; gather observations without
-turning supplied allegations, estimates, or quotations into editorial conclusions.
+and current topic definitions before collecting. Save supplied allegations,
+estimates, and quotations as observations without an editorial approval gate;
+do not convert them into conclusions.
 
 ## Collection and storage
 
