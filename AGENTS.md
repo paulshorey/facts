@@ -26,7 +26,8 @@ Run relevant tests and update README.md when changing collection behavior.
 
 # Research and report
 
-If something went wrong, stop and report back. Include all info, data, and logs.
+If something goes wrong, stop the affected operation and report relevant findings, data, and logs.
+Redact secrets and private content.
 If unsure about something, research, search the web, find latest techniques and best practices.
 
 # Next steps
