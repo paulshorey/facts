@@ -6,6 +6,8 @@ spending categories, expense rows, and attributed estimates. The original design
 is in [`_working/initial_research_framework.md`](_working/initial_research_framework.md).
 The latest verified refresh, cloud restore and development mirror results are in
 [`_working/corpus_refresh_handoff.md`](_working/corpus_refresh_handoff.md).
+The next-task recommendation, operational prerequisites and offline alternatives
+are in [`_working/next_initiative_handoff.md`](_working/next_initiative_handoff.md).
 
 ## Start
 
