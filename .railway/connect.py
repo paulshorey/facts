@@ -1,6 +1,6 @@
 """Save dedicated development connections locally without displaying credentials.
 
-Run with the explicitly selected WebArts workspace profile. This reads provider
+Run with RAILWAY_API_TOKEN from the shell (exported from ~/.secrets.sh). This reads provider
 state/credentials; it does not reset passwords, create resources or deploy code.
 """
 import json
