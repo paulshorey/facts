@@ -16,14 +16,17 @@ can overwrite/delete content, and object lock, versioning and bucket backups are
 unsupported. Retain independent local snapshots and manifests. The October 17
 conditional-write smoke test established observed behavior, not a provider guarantee.
 
-Run only in the explicitly selected WebArts profile:
+On Paul’s Mac, use the workspace token `RAILWAY_API_TOKEN` exported from
+`~/.secrets.sh`. Clean noninteractive shells must receive it explicitly;
+`~/.shortcuts.sh` defines shell helpers, not Railway credentials. Unset
+`RAILWAY_TOKEN` for workspace operations and require a nonempty API token.
 
 ```bash
 npm --prefix .railway ci --ignore-scripts
 npm --prefix .railway run check
 (
-  source "$HOME/.config/railway/webarts.env"
   unset RAILWAY_TOKEN
+  test -n "${RAILWAY_API_TOKEN:-}" || exit 1
   export RAILWAY_PROJECT_ID=f463753e-8db6-4d2b-b8d1-127e9ab5d59d
   export RAILWAY_ENVIRONMENT_ID=bd4378a5-dd88-44c3-957f-57877e8ca905
   # Verifies live volume identity/attachment before creating a pinned plan.
@@ -79,9 +82,9 @@ volume or a deliberately implemented transactional queue.
 
 ## Current recovery gate
 
-The October 25 saved-corpus audit and snapshot verification passed. Provider access
-is currently denied for this exact project through the configured WebArts profile,
-documented fallback and connector. S3 returns `SignatureDoesNotMatch`. The saved
+The October 25 saved-corpus audit and snapshot verification passed. The shell workspace
+token reads this project's environment, Postgres service, volume and bucket
+(verified October 31). S3 returns `SignatureDoesNotMatch`. The saved
 database credential still permits read-only SQL/TLS. PostgreSQL reports about
 1.00 GB of database data, but actual volume used/free/capacity is unverified.
 Do not run an import, infrastructure apply or paid extraction while these checks

@@ -1,6 +1,6 @@
 """Save dedicated development connections locally without displaying credentials.
 
-Run with the explicitly selected WebArts workspace profile. This reads provider
+Run with RAILWAY_API_TOKEN from the shell (exported from ~/.secrets.sh). This reads provider
 state/credentials; it does not reset passwords, create resources or deploy code.
 """
 import json
@@ -15,6 +15,8 @@ def inspect_target():
     directory=Path(__file__).resolve().parent;target=json.loads((directory/'project.json').read_text())
     env={**os.environ,'RAILWAY_PROJECT_ID':target['projectId'],'RAILWAY_ENVIRONMENT_ID':target['environmentId']}
     env.pop('RAILWAY_TOKEN',None)
+    if not env.get('RAILWAY_API_TOKEN', '').strip():
+        raise ValueError('Missing Railway workspace token from ~/.secrets.sh')
     # SDK 3.15.0 executes env._ --version for its CLI compatibility check.
     # A Python parent otherwise leaves '_' pointing at Python instead of Railway.
     env['_']=shutil.which('railway') or 'railway'
