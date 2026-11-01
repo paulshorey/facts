@@ -15,6 +15,8 @@ def inspect_target():
     directory=Path(__file__).resolve().parent;target=json.loads((directory/'project.json').read_text())
     env={**os.environ,'RAILWAY_PROJECT_ID':target['projectId'],'RAILWAY_ENVIRONMENT_ID':target['environmentId']}
     env.pop('RAILWAY_TOKEN',None)
+    if not env.get('RAILWAY_API_TOKEN', '').strip():
+        raise ValueError('Missing Railway workspace token from ~/.secrets.sh')
     # SDK 3.15.0 executes env._ --version for its CLI compatibility check.
     # A Python parent otherwise leaves '_' pointing at Python instead of Railway.
     env['_']=shutil.which('railway') or 'railway'

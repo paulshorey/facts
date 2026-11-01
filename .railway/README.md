@@ -16,14 +16,17 @@ can overwrite/delete content, and object lock, versioning and bucket backups are
 unsupported. Retain independent local snapshots and manifests. The October 17
 conditional-write smoke test established observed behavior, not a provider guarantee.
 
-Every shell exports the Railway workspace token (`RAILWAY_API_TOKEN`) from
-`~/.secrets.sh`. Unset `RAILWAY_TOKEN` first, because a project token takes precedence:
+On Paul’s Mac, use the workspace token `RAILWAY_API_TOKEN` exported from
+`~/.secrets.sh`. Clean noninteractive shells must receive it explicitly;
+`~/.shortcuts.sh` defines shell helpers, not Railway credentials. Unset
+`RAILWAY_TOKEN` for workspace operations and require a nonempty API token.
 
 ```bash
 npm --prefix .railway ci --ignore-scripts
 npm --prefix .railway run check
 (
   unset RAILWAY_TOKEN
+  test -n "${RAILWAY_API_TOKEN:-}" || exit 1
   export RAILWAY_PROJECT_ID=f463753e-8db6-4d2b-b8d1-127e9ab5d59d
   export RAILWAY_ENVIRONMENT_ID=bd4378a5-dd88-44c3-957f-57877e8ca905
   # Verifies live volume identity/attachment before creating a pinned plan.
