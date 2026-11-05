@@ -56,8 +56,11 @@ def _number(value):
         return None
     # PostgreSQL numeric allows 131072 digits before and 16383 after the point; anything
     # beyond stays untyped (value_text keeps it) rather than aborting the whole import.
-    if not number.is_finite() or number.is_zero():
-        return number if number.is_finite() else None
+    if not number.is_finite():
+        return None
+    if number.is_zero():
+        # 0e-20000 is still zero; store it canonically so its exponent cannot exceed the scale cap.
+        return Decimal(0)
     # Check both the integer digits (adjusted exponent) and the effective scale
     # (fractional digits after dropping insignificant trailing zeros).
     # Computed from the digit tuple: Decimal.normalize() can overflow the default context.

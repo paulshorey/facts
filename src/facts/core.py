@@ -379,6 +379,24 @@ def extraction_body(chunk, topic, max_tokens=EXTRACTION_MAX_TOKENS):
             "response_format": {"type": "json_schema", "json_schema": {"name": "Extraction", "schema": schema}}, "reasoning_effort": 256}
 
 
+def retry_after(value, default):
+    """Seconds to wait from a Retry-After header in delay-seconds or HTTP-date form."""
+    if not value:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        pass
+    from email.utils import parsedate_to_datetime
+    try:
+        when = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return default
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return max(0.0, (when - datetime.now(timezone.utc)).total_seconds())
+
+
 def llm_extract(chunk, topic, max_tokens=EXTRACTION_MAX_TOKENS, *, body=None):
     body = body or extraction_body(chunk, topic, max_tokens)
     # Full-length responses can exceed several minutes under provider load; a read timeout
@@ -404,8 +422,7 @@ def llm_extract(chunk, topic, max_tokens=EXTRACTION_MAX_TOKENS, *, body=None):
             if not retry:
                 break
             count = rate_retries if status == 429 else server_retries
-            try:delay=float(response.headers.get('retry-after',3*(2**count)))
-            except ValueError:delay=3*(2**count)
+            delay = retry_after(response.headers.get('retry-after'), 3*(2**count))
             time.sleep(min(max(delay,1),60))
             if status == 429: rate_retries += 1
             else: server_retries += 1
