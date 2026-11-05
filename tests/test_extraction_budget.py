@@ -152,3 +152,60 @@ def test_repeated_refusals_do_not_strand_a_job(queue, monkeypatch):
     monkeypatch.setattr(core, 'llm_extract', succeed)
     core.normalize(queue, 'topic', 3, 1, **options)
     assert 'source text 1' in calls
+
+
+def test_triage_defers_duplicates_datasets_and_short_text_reversibly(tmp_path, monkeypatch):
+    from facts import triage
+    store=core.Store(tmp_path);store.db.execute("INSERT INTO topics VALUES ('topic','{}')")
+    body='Long disclosure text. '*40
+    def job(url, text, state='queued', dataset=False):
+        sid=store.source('topic',url);cid=store.capture(sid,'direct_http',b'raw',text)
+        if dataset:
+            store.db.execute("INSERT INTO datasets VALUES (?,?,?,?,?)",('dataset_'+url[-1],'topic',sid,store.put('x'),'{}'))
+        jid='job_'+url[-1]
+        store.db.execute('''INSERT INTO extraction_jobs(id,topic,capture,chunk,text_artifact,prompt_version,state)
+            VALUES (?,'topic',?,0,?,'fixture',?)''',(jid,cid,store.put(text),state))
+        return jid
+    official=job('https://oge.gov/a', body, state='succeeded')
+    mirror=job('https://cnbc.com/b', '  '+body.replace(' ', '  '))
+    workbook=job('https://omb.gov/c', body+' workbook', dataset=True)
+    title=job('https://youtube.com/d', 'A video title')
+    unique=job('https://example.com/e', body+' unique')
+    store.db.commit()
+    decisions=triage.plan(store,'topic')
+    assert {k: v[0] for k, v in decisions.items()} == {mirror: 'duplicate_capture_text', workbook: 'structured_dataset',
+                                                      title: 'insufficient_text'}
+    assert decisions[mirror][1]['kept_capture'] == store.db.execute("SELECT capture FROM extraction_jobs WHERE id=?", (official,)).fetchone()[0]
+    triage.apply(store,'topic',decisions)
+    states=dict(store.db.execute("SELECT id,state FROM extraction_jobs"))
+    assert states[unique]=='queued' and states[mirror]=='deferred' and states[official]=='succeeded'
+    assert store.db.execute("SELECT count(*) FROM attempts WHERE stage='triage' AND outcome='deferred'").fetchone()[0]==3
+    calls=[]
+    monkeypatch.setenv('FIREWORKS_API_KEY','fixture-no-network')
+    monkeypatch.setattr(core,'llm_extract',lambda text,*a,**k:(calls.append(text),({},core.Extraction(items=[]),None))[1])
+    core.normalize(store,'topic',10,1,maximum=1,input_rate='.15',output_rate='.5',existing_only=True)
+    assert calls==[body+' unique']
+    assert triage.restore(store,'topic','insufficient_text')==1
+    assert store.db.execute("SELECT state FROM extraction_jobs WHERE id=?",(title,)).fetchone()[0]=='queued'
+
+
+def test_uncertain_run_state_survives_a_later_refusal_in_the_same_batch(queue, monkeypatch):
+    import httpx
+    from facts import extraction
+    order=[]
+    def request(text, *args, **kwargs):
+        order.append(text)
+        if text=='source text 1': raise TimeoutError('lost')
+        response=httpx.Response(429, request=httpx.Request('POST','https://api.fireworks.ai/x'))
+        raise httpx.HTTPStatusError('rejected', request=response.request, response=response)
+    monkeypatch.setattr(core, 'llm_extract', request)
+    real_wait=extraction.wait
+    def both_done(pending, return_when):
+        real_wait(pending, return_when='ALL_COMPLETED')
+        # Deliver the ambiguous failure before the refusal.
+        return sorted(pending, key=lambda f: pending[f]['id']), set()
+    monkeypatch.setattr(extraction, 'wait', both_done)
+    report=core.normalize(queue, 'topic', 3, 2, maximum=1, input_rate='.15', output_rate='.5', existing_only=True)
+    assert report['state']=='provider_uncertain'
+    states=dict(queue.db.execute("SELECT id,state FROM extraction_jobs WHERE id IN ('1','2')"))
+    assert states=={'1':'running','2':'queued'}

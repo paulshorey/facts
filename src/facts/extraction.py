@@ -73,17 +73,20 @@ def collect(store, topic, limit, workers, *, maximum, input_rate, output_rate, r
                     except Exception as failure:
                         # No response proves completion/rejection. Preserve the running
                         # reservation for manual recovery, including with --retry-failed.
-                        uncertain = True; stopped = True; report['state']='provider_uncertain'
                         raw={'error_class':type(failure).__name__};parsed=None;error=type(failure).__name__
                         response=getattr(failure,'response',None)
                         status=getattr(response,'status_code',None)
+                        stopped = True
                         if status in {401,403,429}:
                             # A received auth/rate-limit rejection is a definitive refusal before
                             # inference, not an unknown outcome: requeue the job and stop dispatch.
-                            uncertain=False;stopped=True;report['state']='provider_stopped'
+                            # An unknown outcome elsewhere in this run keeps precedence.
+                            if report['state']!='provider_uncertain':report['state']='provider_stopped'
                             raw.update(status=status,body=(response.text or '')[:2000],
                                        rate_limit={k:v for k,v in response.headers.items() if 'ratelimit' in k.lower() or k.lower()=='retry-after'})
                             error=f'http_{status}'
+                        else:
+                            uncertain = True; report['state']='provider_uncertain'
                     # Storage/transaction failures propagate out of the dispatcher.
                     # They must not be treated as another provider retry.
                     rejected=error in {'http_401','http_403','http_429'}
