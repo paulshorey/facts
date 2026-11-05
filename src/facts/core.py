@@ -368,17 +368,22 @@ Each item needs a short useful title and 1-3 sentence detail. original_text is a
 """
 
 
-def extraction_body(chunk, topic, max_tokens=6500):
+# Dense filings and budget tables routinely need more than 6,500 output tokens per
+# 14k-character chunk; truncation wastes the whole call before splitting.
+EXTRACTION_MAX_TOKENS = 12000
+
+
+def extraction_body(chunk, topic, max_tokens=EXTRACTION_MAX_TOKENS):
     schema = Extraction.model_json_schema()
     return {"model": MODEL, "messages": [{"role": "system", "content": EXTRACTION_PROMPT}, {"role": "user", "content": dumps({"topic": topic, "source_text": chunk})}], "temperature": 0, "max_tokens": max_tokens,
             "response_format": {"type": "json_schema", "json_schema": {"name": "Extraction", "schema": schema}}, "reasoning_effort": 256}
 
 
-def llm_extract(chunk, topic, max_tokens=6500, *, body=None):
+def llm_extract(chunk, topic, max_tokens=EXTRACTION_MAX_TOKENS, *, body=None):
     body = body or extraction_body(chunk, topic, max_tokens)
-    # Full 6,500-token responses can exceed 150 s under provider load; a read timeout
+    # Full-length responses can exceed several minutes under provider load; a read timeout
     # leaves an uncertain (possibly billed) job, so allow the response time to finish.
-    with httpx.Client(timeout=httpx.Timeout(300, connect=30)) as client:
+    with httpx.Client(timeout=httpx.Timeout(600, connect=30)) as client:
         request_history=[]
         # A 429 is refused before inference, so it gets patient retries without
         # consuming the three-request allowance that the cost reservation covers.

@@ -42,7 +42,9 @@ def plan(store, topic):
     rows = db.execute("""SELECT j.id, j.capture, j.chunk, c.source, c.text_artifact, c.acquired
         FROM extraction_jobs j JOIN captures c ON c.id=j.capture
         WHERE j.topic=? AND j.state='queued' ORDER BY j.id""", (topic,)).fetchall()
-    datasets = {r[0] for r in db.execute("SELECT source FROM datasets WHERE topic=? AND source IS NOT NULL", (topic,))}
+    # Only datasets that actually preserved rows cover their source; empty manifests do not.
+    datasets = {r[0] for r in db.execute("""SELECT source FROM datasets WHERE topic=? AND source IS NOT NULL
+        AND coalesce(json_extract(payload,'$.row_count'),0) > 0 AND json_extract(payload,'$.parquet') IS NOT NULL""", (topic,))}
     captures = {}
     for row in rows:
         if row["capture"] not in captures:

@@ -161,7 +161,8 @@ def test_triage_defers_duplicates_datasets_and_short_text_reversibly(tmp_path, m
     def job(url, text, state='queued', dataset=False):
         sid=store.source('topic',url);cid=store.capture(sid,'direct_http',b'raw',text)
         if dataset:
-            store.db.execute("INSERT INTO datasets VALUES (?,?,?,?,?)",('dataset_'+url[-1],'topic',sid,store.put('x'),'{}'))
+            store.db.execute("INSERT INTO datasets VALUES (?,?,?,?,?)",('dataset_'+url[-1],'topic',sid,store.put('x'),
+                             '{"row_count": 3, "parquet": "storage/tables/x.parquet"}'))
         jid='job_'+url[-1]
         store.db.execute('''INSERT INTO extraction_jobs(id,topic,capture,chunk,text_artifact,prompt_version,state)
             VALUES (?,'topic',?,0,?,'fixture',?)''',(jid,cid,store.put(text),state))
@@ -311,3 +312,14 @@ def test_conflicting_mutating_flags_fail_before_any_work(monkeypatch):
     monkeypatch.setattr('sys.argv',['facts.postgres_sync','--migrate','--migration-status'])
     with pytest.raises(SystemExit) as error: postgres_sync.main()
     assert error.value.code==2
+
+
+def test_triage_ignores_empty_dataset_manifests(tmp_path):
+    from facts import triage
+    store=core.Store(tmp_path);store.db.execute("INSERT INTO topics VALUES ('topic','{}')")
+    sid=store.source('topic','https://example.com/empty.xlsx');cid=store.capture(sid,'direct_http',b'raw','A workbook note. '*30)
+    store.db.execute("INSERT INTO datasets VALUES ('dataset_e','topic',?,?,?)",(sid,store.put('x'),'{"row_count": 0, "parquet": null}'))
+    store.db.execute('''INSERT INTO extraction_jobs(id,topic,capture,chunk,text_artifact,prompt_version,state)
+        VALUES ('j','topic',?,0,?,'fixture','queued')''',(cid,store.put('A workbook note. '*30)))
+    store.db.commit()
+    assert triage.plan(store,'topic')=={}
