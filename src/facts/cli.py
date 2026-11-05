@@ -47,6 +47,8 @@ def main():
         parser.error("Extraction rates/--existing-only require normalize")
     if (args.apply or args.restore) and args.command != "triage":
         parser.error("--apply/--restore require triage")
+    if args.apply and args.restore:
+        parser.error("Choose --apply or --restore")
     if args.command == "triage" and args.topic == "all":
         parser.error("triage requires one --topic")
     if args.dry_run and args.pilot:

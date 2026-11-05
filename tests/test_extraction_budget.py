@@ -275,3 +275,39 @@ def test_connection_failures_are_retried_then_requeued_not_uncertain(queue, monk
     report=core.normalize(queue, 'topic', 3, 1, maximum=1, input_rate='.15', output_rate='.5', existing_only=True)
     assert len(attempts)==5 and report['state']=='provider_unreachable'
     assert tuple(queue.db.execute("SELECT state,error,attempts FROM extraction_jobs WHERE id='1'").fetchone())==('queued','connect_failed',0)
+
+
+def test_triage_keeps_short_substantive_text_and_ignores_failed_split_trees(tmp_path):
+    from facts import triage
+    store=core.Store(tmp_path);store.db.execute("INSERT INTO topics VALUES ('topic','{}')")
+    def add(url, text, jobs):
+        sid=store.source('topic',url);cid=store.capture(sid,'search_excerpt',b'raw',text)
+        for jid,chunk,state,part in jobs:
+            store.db.execute('''INSERT INTO extraction_jobs(id,topic,capture,chunk,text_artifact,prompt_version,state)
+                VALUES (?,'topic',?,?,?,'fixture',?)''',(jid,cid,chunk,store.put(part),state))
+        return cid
+    add('https://example.com/headline','Fund got $2 billion from MGX, filing says',[('extract_h',0,'queued','Fund got $2 billion from MGX, filing says')])
+    add('https://example.com/thumb','▶ 0:42',[('extract_t',0,'queued','▶ 0:42')])
+    body='Disclosure row. '*60
+    # The keeper's only chunk split, and one child failed: it no longer covers that text.
+    keeper=add('https://example.com/a',body,[('extract_a',0,'split',body),('extract-part_a1',0,'succeeded','x'),
+                                             ('extract-part_a2',0,'failed','y')])
+    store.attempt('split_extraction','extract_a','succeeded',metadata={'children':[{'job_id':'extract-part_a1'},{'job_id':'extract-part_a2'}]})
+    add('https://example.com/b',body,[('extract_b',0,'queued',body)])
+    store.db.commit()
+    decisions=triage.plan(store,'topic')
+    assert {k:v[0] for k,v in decisions.items()}=={'extract_t':'insufficient_text'}
+    store.db.execute("UPDATE extraction_jobs SET state='queued' WHERE id='extract-part_a2'");store.db.commit()
+    assert 'extract_b' in triage.plan(store,'topic')
+
+
+def test_conflicting_mutating_flags_fail_before_any_work(monkeypatch):
+    from facts import cli
+    for argv in (['facts','triage','--topic','t','--apply','--restore'],):
+        monkeypatch.setattr('sys.argv',argv)
+        with pytest.raises(SystemExit) as error: cli.main()
+        assert error.value.code==2
+    from facts import postgres_sync
+    monkeypatch.setattr('sys.argv',['facts.postgres_sync','--migrate','--migration-status'])
+    with pytest.raises(SystemExit) as error: postgres_sync.main()
+    assert error.value.code==2

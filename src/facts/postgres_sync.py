@@ -171,6 +171,8 @@ def main():
     p.add_argument('--migrate',action='store_true',help='Apply pending PostgreSQL schema migrations only')
     p.add_argument('--migration-status',action='store_true',help='Report applied/pending migrations without writing')
     args=p.parse_args()
+    if args.migrate and args.migration_status:
+        p.error('Choose --migrate or --migration-status')
     if args.migrate or args.migration_status:
         if args.apply:
             p.error('--migrate/--migration-status cannot be combined with --apply')

@@ -70,10 +70,13 @@ or waste; `--apply` moves them to `deferred` (kept, excluded from dispatch) and
 records a `triage` attempt with the evidence. Reasons: `duplicate_capture_text`
 (the same whitespace-normalized text as another capture; the capture with the most
 completed work is kept), `structured_dataset` (the source's rows are already
-imported as a dataset) and `insufficient_text` (under 200 characters, typically a
-title-only capture). `--restore [reason]` returns deferred jobs to the queue. The
-November 2026 triage deferred 1,530 jobs, including three copies of one OGE 278e
-disclosure and 694 chunks of already-imported OMB workbooks.
+imported as a dataset) and `insufficient_text` (fewer than 20 letters/digits, such
+as an image thumbnail; short headlines and excerpts stay eligible). Duplicate
+coverage compares normalized chunk text and counts a split job only while its whole
+child tree is queued, running or succeeded. `--restore [reason]` returns deferred
+jobs to the queue; `--apply` and `--restore` are mutually exclusive. The November
+2026 triage deferred three copies of one OGE 278e disclosure (650 chunks) and 694
+chunks of already-imported OMB workbooks.
 
 `--existing-only` consumes the saved queue without generating new extraction jobs.
 Otherwise the command queues chunks of the best available saved capture first.
