@@ -384,7 +384,9 @@ def retry_after(value, default):
     if not value:
         return default
     try:
-        return float(value)
+        seconds = float(value)
+        # NaN/inf parse as floats but are not delays; fall back to the default.
+        return seconds if seconds == seconds and seconds not in (float("inf"), float("-inf")) else default
     except ValueError:
         pass
     from email.utils import parsedate_to_datetime

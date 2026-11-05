@@ -329,6 +329,7 @@ def test_retry_after_accepts_seconds_and_http_dates():
     from datetime import datetime, timedelta, timezone
     from email.utils import format_datetime
     assert core.retry_after('7', 3) == 7 and core.retry_after(None, 3) == 3 and core.retry_after('soon', 3) == 3
+    assert core.retry_after('NaN', 3) == 3 and core.retry_after('inf', 3) == 3 and core.retry_after('-Infinity', 3) == 3
     later = format_datetime(datetime.now(timezone.utc) + timedelta(seconds=45), usegmt=True)
     assert 40 <= core.retry_after(later, 3) <= 46
     assert core.retry_after(format_datetime(datetime(2000, 1, 1, tzinfo=timezone.utc), usegmt=True), 3) == 0
