@@ -6,8 +6,9 @@ spending categories, expense rows, and attributed estimates. The original design
 is in [`_working/initial_research_framework.md`](_working/initial_research_framework.md).
 The latest verified refresh, cloud restore and development mirror results are in
 [`_working/corpus_refresh_handoff.md`](_working/corpus_refresh_handoff.md).
-The next-task recommendation, operational prerequisites and offline alternatives
-are in [`_working/next_initiative_handoff.md`](_working/next_initiative_handoff.md).
+The November 4–5 extraction, delivery and Postgres import cycle and its next steps
+are in [`_working/research_cycle_2026-11-05.md`](_working/research_cycle_2026-11-05.md)
+(it supersedes [`_working/next_initiative_handoff.md`](_working/next_initiative_handoff.md)).
 
 ## Start
 
