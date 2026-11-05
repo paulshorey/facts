@@ -51,9 +51,17 @@ def _number(value):
     if not NUMBER.fullmatch(text):
         return None
     try:
-        return Decimal(text)
+        number = Decimal(text)
     except InvalidOperation:
         return None
+    # PostgreSQL numeric allows 131072 digits before and 16383 after the point; anything
+    # beyond stays untyped (value_text keeps it) rather than aborting the whole import.
+    if not number.is_finite() or number.is_zero():
+        return number if number.is_finite() else None
+    exponent = number.adjusted()
+    if exponent >= 131072 or -exponent > 16383 or len(number.as_tuple().digits) > 1000:
+        return None
+    return number
 
 
 def _table(store, name):
@@ -203,7 +211,9 @@ def refresh(store, connection, receipt_id, *, force=False):
             if not ids:
                 continue
             urls = {r.get("url") for rid in ids for r in by_id[rid].get("references", []) if r.get("url")}
-            yield (gid, g["topic"], g["group_kind"], g["title"], g.get("category"), g.get("anchor_id"), len(ids),
+            # A stale anchor would point outside the current membership; fall back to a current member.
+            anchor = g.get("anchor_id") if g.get("anchor_id") in ids else min(ids)
+            yield (gid, g["topic"], g["group_kind"], g["title"], g.get("category"), anchor, len(ids),
                    len(urls), g.get("version"), Jsonb(g))
     _copy(connection, "groups", ("id", "topic", "group_kind", "title", "category", "anchor_id", "observation_count",
                                  "source_url_count", "version", "payload"), group_rows(), counts)

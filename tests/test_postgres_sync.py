@@ -487,3 +487,25 @@ def test_unlinked_retry_revalidates_parquet_even_with_an_unchanged_catalog(tmp_p
     with pytest.raises(FileNotFoundError):
         postgres_sync.sync_records(store, postgres)
     assert postgres.execute("SELECT receipt_id FROM research.refresh_state").fetchone()[0] == first["receipt_id"]
+
+
+def test_read_model_number_bounds_and_current_group_anchor(tmp_path, postgres):
+    from facts import postgres_read_model as model
+    assert model._number("1e1000000") is None and model._number("1e-20000") is None
+    assert model._number("12.50") == 12.5 and model._number("0") == 0 and model._number("about 3") is None
+    store = OrganizedStore(tmp_path); add_topic(store)
+    for iid in ("a", "b"):
+        store.save_record(Observation(id=iid, topic="topic", title="Contract awarded", input_ids=[iid],
+            entities=[{"name": "Acme", "entity_type": "organization"}],
+            measurements=[{"metric": "m", "value": "1e1000000", "original_expression": "huge"}]), "v1", "item:"+iid)
+    store.db.commit(); group_observations(store)
+    gid, payload = store.db.execute("SELECT id,payload FROM organized_groups WHERE group_kind='occurrence' LIMIT 1").fetchone()
+    anchor = __import__("json").loads(payload)["anchor_id"]
+    other = "b" if anchor == "a" else "a"
+    # Make the stored anchor stale while the other member stays current.
+    store.save_record(Observation(id=anchor, topic="topic", title="Revised", input_ids=[anchor]), "v2", "item:"+anchor)
+    store.db.commit()
+    postgres_sync.sync_records(store, postgres)
+    assert postgres.execute("SELECT count(*) FROM research.measurements WHERE value IS NULL AND value_text='1e1000000'").fetchone()[0] >= 1
+    row = postgres.execute("SELECT anchor_id, observation_count FROM research.groups WHERE id=%s", (gid,)).fetchone()
+    assert row == (other, 1)
