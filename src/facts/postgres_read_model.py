@@ -77,11 +77,16 @@ def current_receipt(connection):
     return tuple(row) if row else None
 
 
-def refresh(store, connection, receipt_id):
-    """Replace the read model with the active catalog. Caller holds the SQLite snapshot and PG transaction."""
+def refresh(store, connection, receipt_id, *, force=False):
+    """Replace the read model with the active catalog. Caller holds the SQLite snapshot and PG transaction.
+
+    A receipt-linked import has verified the root's Parquet bytes, so an unchanged receipt
+    can skip the rebuild. Unlinked imports pass force=True: their receipt does not cover
+    those files, so they always re-read (and revalidate) them.
+    """
     from psycopg.types.json import Jsonb
 
-    if current_receipt(connection) == (receipt_id, MODEL_VERSION):
+    if not force and current_receipt(connection) == (receipt_id, MODEL_VERSION):
         return {"refreshed": False, "reason": "read model already matches this receipt"}
     # DELETE (not TRUNCATE) keeps concurrent readers on the previous MVCC snapshot.
     for table in TABLES:

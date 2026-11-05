@@ -403,10 +403,14 @@ def test_sync_builds_typed_research_read_model_atomically(tmp_path, postgres):
                                                                     ("2026", 18270000000, 18270, "Book.xlsx:Sheet")]
     state = postgres.execute("SELECT receipt_id,model_version FROM research.refresh_state").fetchone()
     assert state == (first["receipt_id"], "research-v1")
+    # Unlinked receipts do not cover Parquet bytes, so every unlinked import rebuilds.
     second = postgres_sync.sync_records(store, postgres)
-    assert second["receipt_id"] == first["receipt_id"] and not second["read_model"]["refreshed"]
+    assert second["receipt_id"] == first["receipt_id"] and second["read_model"]["refreshed"]
+    linked = postgres_sync.sync_records(store, postgres, artifact_manifest="manifest-1")
+    again = postgres_sync.sync_records(store, postgres, artifact_manifest="manifest-1")
+    assert linked["read_model"]["refreshed"] and not again["read_model"]["refreshed"]
     store.db.execute("DELETE FROM organized_records WHERE id='obs_1'"); store.db.commit()
-    third = postgres_sync.sync_records(store, postgres)
+    third = postgres_sync.sync_records(store, postgres, artifact_manifest="manifest-2")
     assert third["read_model"]["refreshed"] and third["read_model"]["counts"]["observations"] == 0
     assert postgres.execute("SELECT count(*) FROM research.measurements").fetchone()[0] == 0
     assert postgres.execute("SELECT count(*) FROM research.series_values").fetchone()[0] == 2
@@ -473,3 +477,13 @@ def test_read_model_omits_retired_entities_and_stale_groups(tmp_path, postgres):
     names = {r[0] for r in postgres.execute("SELECT name FROM research.entities")}
     assert names == {"Other Corp"}
     assert report["read_model"]["counts"]["groups"] == 0 and report["read_model"]["counts"]["group_members"] == 0
+
+
+def test_unlinked_retry_revalidates_parquet_even_with_an_unchanged_catalog(tmp_path, postgres):
+    store = OrganizedStore(tmp_path); add_topic(store)
+    _series_fixture(store, tmp_path)
+    first = postgres_sync.sync_records(store, postgres)
+    (tmp_path / "storage/organized/tables/table-version_x.parquet").unlink()
+    with pytest.raises(FileNotFoundError):
+        postgres_sync.sync_records(store, postgres)
+    assert postgres.execute("SELECT receipt_id FROM research.refresh_state").fetchone()[0] == first["receipt_id"]

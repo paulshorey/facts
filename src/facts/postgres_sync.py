@@ -108,7 +108,8 @@ def sync_records(store, connection, *, artifact_manifest=None):
                 VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT(id) DO NOTHING''',
                 (receipt_id,digest,artifact_manifest,Jsonb(counts),Jsonb(kinds),synced_at))
             # The typed read model comes from this same SQLite snapshot and commits atomically.
-            read_model = postgres_read_model.refresh(store, connection, receipt_id)
+            read_model = postgres_read_model.refresh(store, connection, receipt_id,
+                                                      force=artifact_manifest is None)
         written = connection.execute('''INSERT INTO facts.records AS existing (kind,id,topic,payload,synced_at)
             SELECT kind,id,topic,payload,synced_at FROM facts_sync_stage
             ON CONFLICT(kind,id) DO UPDATE SET payload=excluded.payload,

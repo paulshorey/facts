@@ -81,7 +81,34 @@ def main():
         for value in query_series(topic=args.topic, period=args.period, basis=args.basis, limit=args.limit or 20):
             print(dumps(value))
         return
+    if args.command == "triage":
+        return triage_command(args)
     return collector_command(args)
+
+
+def triage_command(args):
+    from . import triage
+    from .core import ROOT
+    if not (args.apply or args.restore):
+        # A preview must not load topic files, create searches or run DDL.
+        reader = triage.CatalogReader(ROOT)
+        try:
+            decisions = triage.plan(reader, args.topic)
+        finally:
+            reader.db.close()
+        print(json.dumps({"topic": args.topic, "applied": False, "deferred": triage.summarize(decisions)})); return
+    return triage_write(args)
+
+
+@exclusive_writer
+def triage_write(args):
+    from . import triage
+    store = Store()
+    if args.restore:
+        print(json.dumps({"restored": triage.restore(store, args.topic, None if args.restore == "all" else args.restore)})); return
+    decisions = triage.plan(store, args.topic)
+    triage.apply(store, args.topic, decisions)
+    print(json.dumps({"topic": args.topic, "applied": True, "deferred": triage.summarize(decisions)}))
 
 
 @exclusive_writer
@@ -95,14 +122,6 @@ def collector_command(args):
         print(json.dumps(normalize(store, args.topic, args.limit, args.workers or 2,
             maximum=args.max_cost_usd, input_rate=args.input_usd_per_million,
             output_rate=args.output_usd_per_million, retry_failed=args.retry_failed, existing_only=args.existing_only)))
-    elif args.command == "triage":
-        from . import triage
-        if args.restore:
-            print(json.dumps({"restored": triage.restore(store, args.topic, None if args.restore == "all" else args.restore)})); return
-        decisions = triage.plan(store, args.topic)
-        if args.apply:
-            triage.apply(store, args.topic, decisions)
-        print(json.dumps({"topic": args.topic, "applied": args.apply, "deferred": triage.summarize(decisions)}))
     elif args.command == "repair-truncated": repair_truncated(store, args.topic)
     elif args.command == "export": export(store, args.topic)
     elif args.command == "import": import_packet(store, args.topic, args.file)

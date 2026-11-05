@@ -230,3 +230,36 @@ def test_triage_keeps_duplicate_chunks_the_kept_capture_no_longer_covers(tmp_pat
     store.db.execute("UPDATE extraction_jobs SET state='failed' WHERE id='b0'");store.db.commit()
     # a covers both chunks (and has completed work); b's chunk 1 is deferred, not its uncovered chunk 0.
     assert set(triage.plan(store,'topic')) == {'b1'}
+
+
+def test_triage_compares_duplicate_chunk_text_not_indexes(tmp_path):
+    from facts import triage
+    store=core.Store(tmp_path);store.db.execute("INSERT INTO topics VALUES ('topic','{}')")
+    words=['word%d' % i for i in range(300)]
+    def capture(name, text, chunks):
+        sid=store.source('topic','https://example.com/'+name);cid=store.capture(sid,'direct_http',b'raw',text)
+        for index,(part,state) in enumerate(chunks):
+            store.db.execute('''INSERT INTO extraction_jobs(id,topic,capture,chunk,text_artifact,prompt_version,state)
+                VALUES (?,'topic',?,?,?,'fixture',?)''',(f'{name}{index}',cid,index,store.put(part),state))
+    thirds=[' '.join(words[i:i+100]) for i in (0,100,200)]
+    halves=[' '.join(words[:150]), ' '.join(words[150:])]
+    capture('expanded', '  '.join(words), [(thirds[0],'succeeded'),(thirds[1],'succeeded'),(thirds[2],'failed')])
+    capture('compact', ' '.join(words), [(halves[0],'queued'),(halves[1],'queued')])
+    store.db.commit()
+    # Same normalized document, different boundaries: nothing in the compact copy is proven covered.
+    assert triage.plan(store,'topic')=={}
+
+
+def test_triage_preview_does_not_write_the_catalog(tmp_path, monkeypatch):
+    from facts import cli, triage
+    store=core.Store(tmp_path);store.db.execute("INSERT INTO topics VALUES ('topic','{}')");store.db.commit();store.db.close()
+    (tmp_path/'topics').mkdir(exist_ok=True)
+    (tmp_path/'topics'/'new.json').write_text('{"slug":"new","searches":[]}')
+    monkeypatch.setattr('facts.core.ROOT', tmp_path)
+    before=(tmp_path/'storage/catalog.sqlite').read_bytes()
+    monkeypatch.setattr('sys.argv',['facts','triage','--topic','topic'])
+    cli.main()
+    assert (tmp_path/'storage/catalog.sqlite').read_bytes()==before
+    import sqlite3
+    with sqlite3.connect(tmp_path/'storage/catalog.sqlite') as db:
+        assert [r[0] for r in db.execute("SELECT id FROM topics")]==['topic']

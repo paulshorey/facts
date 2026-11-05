@@ -7,10 +7,23 @@ and is excluded from dispatch until restored. Each decision is recorded as a
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 from collections import defaultdict
+from pathlib import Path
 
 MIN_TEXT_CHARS = 200
 REASONS = ("insufficient_text", "structured_dataset", "duplicate_capture_text")
+
+
+class CatalogReader:
+    """Read-only catalog access for previews: no DDL, topic loading or writes."""
+    def __init__(self, root):
+        self.root = Path(root)
+        self.db = sqlite3.connect(f"file:{self.root / 'storage/catalog.sqlite'}?mode=ro", uri=True)
+        self.db.row_factory = sqlite3.Row
+
+    def read(self, path):
+        return (self.root / path).read_text(errors="replace")
 
 
 def _normalized_digest(store, artifact):
@@ -45,15 +58,22 @@ def plan(store, topic):
             digest, _ = _normalized_digest(store, row["text_artifact"])
             if digest in by_digest:
                 by_digest[digest].append(row["id"])
-    # Chunk indexes a capture still covers: some job for that chunk is pending or done.
+    # Compare chunk *content*, not indexes: duplicates can chunk at different boundaries.
+    # A top-level job holds the original chunk text; split children share its index.
+    chunk_digest = defaultdict(set)
     covered = defaultdict(set)
-    for row in db.execute("""SELECT capture, chunk FROM extraction_jobs
+    for row in db.execute("""SELECT capture, chunk, text_artifact, state, id FROM extraction_jobs WHERE topic=?""", (topic,)):
+        if row["id"].startswith("extract-part_"):
+            continue
+        digest, _ = _normalized_digest(store, row["text_artifact"])
+        chunk_digest[(row["capture"], row["chunk"])].add(digest)
+    for row in db.execute("""SELECT DISTINCT capture, chunk FROM extraction_jobs
             WHERE topic=? AND state IN ('queued','running','succeeded','split')""", (topic,)):
-        covered[row["capture"]].add(row["chunk"])
+        covered[row["capture"]] |= chunk_digest[(row["capture"], row["chunk"])]
     keeper = {}
     for digest, group in by_digest.items():
         group = sorted(set(group))
-        # Prefer the capture covering the most chunks, then the most completed work.
+        # Prefer the capture covering the most chunk texts, then the most completed work.
         chosen = sorted(group, key=lambda c: (-len(covered[c]), -done.get(c, 0), c))[0]
         for capture in group:
             keeper[capture] = chosen
@@ -65,8 +85,9 @@ def plan(store, topic):
         elif info["source"] in datasets:
             decisions[row["id"]] = ("structured_dataset", {"capture": row["capture"], "source": info["source"]})
         elif (keeper.get(row["capture"], row["capture"]) != row["capture"]
-              and row["chunk"] in covered[keeper[row["capture"]]]):
-            # Defer per chunk: a chunk the kept capture no longer covers stays queued here.
+              and chunk_digest[(row["capture"], row["chunk"])]
+              and chunk_digest[(row["capture"], row["chunk"])] <= covered[keeper[row["capture"]]]):
+            # Defer only chunks whose exact text the kept capture still covers.
             decisions[row["id"]] = ("duplicate_capture_text", {"capture": row["capture"], "kept_capture": keeper[row["capture"]],
                                                                "normalized_text_sha256": info["digest"]})
     return decisions
