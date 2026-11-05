@@ -382,9 +382,17 @@ def llm_extract(chunk, topic, max_tokens=6500, *, body=None):
         request_history=[]
         # A 429 is refused before inference, so it gets patient retries without
         # consuming the three-request allowance that the cost reservation covers.
-        rate_retries = server_retries = 0
+        rate_retries = server_retries = connect_retries = 0
         while True:
-            response = client.post("https://api.fireworks.ai/inference/v1/chat/completions", headers={"Authorization": "Bearer " + os.environ["FIREWORKS_API_KEY"]}, json=body)
+            try:
+                response = client.post("https://api.fireworks.ai/inference/v1/chat/completions", headers={"Authorization": "Bearer " + os.environ["FIREWORKS_API_KEY"]}, json=body)
+            except (httpx.ConnectError, httpx.ConnectTimeout):
+                # No connection means no request was sent; retrying cannot double-bill.
+                if connect_retries >= 4:
+                    raise
+                time.sleep(5 * 2 ** connect_retries)
+                connect_retries += 1
+                continue
             request_history.append({'status':response.status_code,'at':now()})
             status = response.status_code
             retry = (status == 429 and rate_retries < 6) or (status in (502,503,504) and server_retries < 2)

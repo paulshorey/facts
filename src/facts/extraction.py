@@ -5,6 +5,8 @@ import json
 import os
 from uuid import uuid4
 
+import httpx
+
 from . import core
 
 
@@ -85,11 +87,15 @@ def collect(store, topic, limit, workers, *, maximum, input_rate, output_rate, r
                             raw.update(status=status,body=(response.text or '')[:2000],
                                        rate_limit={k:v for k,v in response.headers.items() if 'ratelimit' in k.lower() or k.lower()=='retry-after'})
                             error=f'http_{status}'
+                        elif isinstance(failure,(httpx.ConnectError,httpx.ConnectTimeout)):
+                            # The connection never opened, so nothing was sent or billed.
+                            if report['state']!='provider_uncertain':report['state']='provider_unreachable'
+                            error='connect_failed'
                         else:
                             uncertain = True; report['state']='provider_uncertain'
                     # Storage/transaction failures propagate out of the dispatcher.
                     # They must not be treated as another provider retry.
-                    rejected=error in {'http_401','http_403','http_429'}
+                    rejected=error in {'http_401','http_403','http_429','connect_failed'}
                     with store.db:
                         artifact=store.put(raw)
                         if error:

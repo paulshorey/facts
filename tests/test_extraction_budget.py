@@ -263,3 +263,15 @@ def test_triage_preview_does_not_write_the_catalog(tmp_path, monkeypatch):
     import sqlite3
     with sqlite3.connect(tmp_path/'storage/catalog.sqlite') as db:
         assert [r[0] for r in db.execute("SELECT id FROM topics")]==['topic']
+
+
+def test_connection_failures_are_retried_then_requeued_not_uncertain(queue, monkeypatch):
+    import httpx
+    monkeypatch.setattr(core.time, 'sleep', lambda seconds: None)
+    attempts=[]
+    def post(self, url, **kwargs):
+        attempts.append(url); raise httpx.ConnectTimeout('no route')
+    monkeypatch.setattr(httpx.Client, 'post', post)
+    report=core.normalize(queue, 'topic', 3, 1, maximum=1, input_rate='.15', output_rate='.5', existing_only=True)
+    assert len(attempts)==5 and report['state']=='provider_unreachable'
+    assert tuple(queue.db.execute("SELECT state,error,attempts FROM extraction_jobs WHERE id='1'").fetchone())==('queued','connect_failed',0)
