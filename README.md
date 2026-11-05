@@ -259,6 +259,53 @@ versioned, and stale relations are ignored after their observations change.
 ```bash
 .venv/bin/python -m facts.postgres_sync
 # For writes, use the snapshot-linked command below with its S3 delivery receipt.
+# Schema only (no catalog data); safe to run before an import:
+.venv/bin/python -m dotenv -f .env.facts-dev run --override -- \
+  .venv/bin/python -m facts.postgres_sync --migration-status
+.venv/bin/python -m dotenv -f .env.facts-dev run --override -- \
+  .venv/bin/python -m facts.postgres_sync --migrate
+```
+
+### Schema migrations and the `research` read model
+
+`src/facts/postgres_schema.py` holds ordered, checksummed migrations recorded in
+`facts.schema_migrations`. Migration 1 is the original `facts` record mirror (it
+adopts an existing unversioned mirror without rewriting it). Migration 2 adds the
+typed `research` schema. Every import applies pending migrations in its own
+transaction. An applied migration whose text changed, or a database carrying a
+newer migration than the code, stops the import. Add a new numbered migration
+instead of editing an applied one.
+
+`facts.records` stays the lossless contract (all kinds and record versions). The
+`research` schema is a derived, query-ready model of the **active** organized
+catalog, rebuilt from the same SQLite snapshot inside the import transaction:
+
+| Table | Contents |
+| --- | --- |
+| `topics`, `sources`, `topic_sources`, `captures` | Collection catalog; source host and parsed publication date |
+| `observations` | Active observations and source references, typed columns, `categories[]`, event window, full-text `search` |
+| `observation_dates`, `measurements`, `observation_entities`, `attributions`, `observation_sources` | One row per date, measurement (exact `numeric` beside original text/unit/scale/basis), entity mention, attribution and evidence locator |
+| `entities`, `entity_aliases` | Canonical entities with trigram-indexed names/aliases |
+| `groups`, `group_members` | Groupings restricted to current member versions |
+| `datasets`, `series`, `series_values` | Table mappings, series definitions and every active value from the retained Parquet (canonical `value` and original-unit `source_value`) |
+| `refresh_state` | Import receipt and model version the read model reflects |
+
+Views: `observation_evidence` (observation → source/capture provenance),
+`series_points` (values with series/dataset labels) and `extraction_status`
+(backlog read from the mirror). Measurements whose value text is not a plain
+number keep `value` null and retain `value_text`. Rows remain observations, not
+unique events or additive totals. A retry of the same receipt skips the rebuild;
+a missing referenced Parquet file fails the whole import and leaves the previous
+mirror and read model intact. Rebuilding uses `DELETE`, so readers keep the
+previous committed model during an import. The full corpus rebuild takes about two
+minutes and roughly 560 MB.
+
+```sql
+SELECT title, event_start FROM research.observations
+WHERE search @@ websearch_to_tsquery('english', 'World Liberty stablecoin')
+ORDER BY event_start DESC NULLS LAST LIMIT 10;
+SELECT period, value, unit, title FROM research.series_points
+WHERE basis = 'outlays' AND period_start = '2024-10-01' LIMIT 20;
 ```
 
 The command above reports local record counts and the kinds an apply would

@@ -82,13 +82,29 @@ volume or a deliberately implemented transactional queue.
 
 ## Current recovery gate
 
-The October 25 saved-corpus audit and snapshot verification passed. The shell workspace
-token reads this project's environment, Postgres service, volume and bucket
-(verified October 31). S3 returns `SignatureDoesNotMatch`. The saved
-database credential still permits read-only SQL/TLS. PostgreSQL reports about
-1.00 GB of database data, but actual volume used/free/capacity is unverified.
-Do not run an import, infrastructure apply or paid extraction while these checks
-and the disposable provider restore remain outstanding.
+Passed on November 4–5, 2026 (private evidence under
+`storage/recovery-proof/2026-11-04/`):
+
+- `connect.py` refreshed the bucket credentials; the earlier `SignatureDoesNotMatch`
+  is gone and the remote manifest listing works.
+- The live volume reported 2,924 MB used of 50,000 MB; daily and weekly volume
+  backups existed. PITR (WAL archiving) is **not** enabled.
+- Provider restore drill on a disposable service: a `pg_dump -n facts` of the
+  real database was restored into a fresh template Postgres (identical content
+  fingerprint), a witness row was written, an on-demand backup was taken, the
+  witness was changed and a row added, and `pitr backup restore` was run. The
+  restore staged a new volume and redeployed; the witness reverted and the record
+  fingerprint matched the source. The drill service and its volumes were then
+  deleted. `verify.py` reported a clean plan and the original attachment intact.
+- Migrations 1–2 were rehearsed on the drill copy, then applied to the real
+  database; the existing mirror fingerprint was unchanged.
+
+Notes from the drill: `railway add` with only `RAILWAY_PROJECT_ID`/`RAILWAY_ENVIRONMENT_ID`
+reported "Project not found" yet created a service; prefer the `templateDeployV2`
+GraphQL mutation with the `postgres` template and an explicit name, and list
+services afterwards. Deleting a manual backup with the workspace token returned
+`UNAUTHORIZED`; deleting its volume removes it. Repeat the drill after provider
+or template changes; it proves volume-backup restore, not PITR.
 
 For a provider restore drill, first verify project/environment/service/volume IDs,
 current capacity and backup inventory with restored control-plane access. Ordinary

@@ -9,28 +9,8 @@ from pathlib import Path
 from .core import ROOT, dumps, now, ident
 from .runtime import writer_lock
 
-SCHEMA = """
-CREATE SCHEMA IF NOT EXISTS facts;
-CREATE TABLE IF NOT EXISTS facts.records (
-  kind text NOT NULL,
-  id text NOT NULL,
-  topic text,
-  payload jsonb NOT NULL,
-  synced_at timestamptz NOT NULL,
-  PRIMARY KEY(kind,id)
-);
-CREATE INDEX IF NOT EXISTS records_topic_kind_idx ON facts.records(topic,kind);
-CREATE INDEX IF NOT EXISTS records_payload_gin_idx ON facts.records USING gin(payload);
-CREATE TABLE IF NOT EXISTS facts.import_receipts (
-  id text PRIMARY KEY, catalog_digest text NOT NULL,
-  artifact_manifest text, counts jsonb NOT NULL,
-  synchronized_kinds jsonb NOT NULL, committed_at timestamptz NOT NULL
-);
-CREATE TABLE IF NOT EXISTS facts.mirror_state (
-  id text PRIMARY KEY CHECK (id='current'),
-  receipt_id text NOT NULL REFERENCES facts.import_receipts(id)
-);
-"""
+from .postgres_schema import MIRROR_SCHEMA as SCHEMA, migrate
+from . import postgres_read_model
 
 BASE_TABLES = ('topics', 'searches', 'sources', 'captures', 'items', 'datasets', 'extraction_jobs', 'attempts')
 ORGANIZED_TABLES = ('organized_records', 'organized_entities', 'organized_aliases', 'organized_groups', 'organized_group_history',
@@ -94,7 +74,7 @@ def sync_records(store, connection, *, artifact_manifest=None):
         # Serialize initialization too: concurrent CREATE IF NOT EXISTS does
         # not itself protect first-time schema creation or lock upgrades.
         connection.execute('SELECT pg_advisory_xact_lock(%s,%s)', SYNC_LOCK)
-        connection.execute(SCHEMA)
+        migrations = migrate(connection, SYNC_LOCK)
         previous = connection.execute('''SELECT r.artifact_manifest FROM facts.mirror_state s
             JOIN facts.import_receipts r ON r.id=s.receipt_id WHERE s.id='current' ''').fetchone()
         if artifact_manifest is None and previous and previous[0] is not None:
@@ -120,6 +100,15 @@ def sync_records(store, connection, *, artifact_manifest=None):
                         leaves.append(hashlib.sha256(dumps([kind, rid, topic, payload]).encode()).hexdigest())
                         count += 1
             connection.execute('ANALYZE facts_sync_stage')
+            # Hash logical contents, independent of enumeration order and delivery time.
+            digest = hashlib.sha256(dumps([sorted(kinds), sorted(leaves)]).encode()).hexdigest()
+            receipt_id = hashlib.sha256(dumps([digest, artifact_manifest]).encode()).hexdigest()
+            connection.execute('''INSERT INTO facts.import_receipts
+                (id,catalog_digest,artifact_manifest,counts,synchronized_kinds,committed_at)
+                VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT(id) DO NOTHING''',
+                (receipt_id,digest,artifact_manifest,Jsonb(counts),Jsonb(kinds),synced_at))
+            # The typed read model comes from this same SQLite snapshot and commits atomically.
+            read_model = postgres_read_model.refresh(store, connection, receipt_id)
         written = connection.execute('''INSERT INTO facts.records AS existing (kind,id,topic,payload,synced_at)
             SELECT kind,id,topic,payload,synced_at FROM facts_sync_stage
             ON CONFLICT(kind,id) DO UPDATE SET payload=excluded.payload,
@@ -130,18 +119,12 @@ def sync_records(store, connection, *, artifact_manifest=None):
             WHERE existing.kind = ANY(%s::text[]) AND NOT EXISTS (
                 SELECT 1 FROM facts_sync_stage AS staged
                 WHERE staged.kind=existing.kind AND staged.id=existing.id)''', (kinds,)).rowcount
-        # Hash logical contents, independent of enumeration order and delivery time.
-        digest = hashlib.sha256(dumps([sorted(kinds), sorted(leaves)]).encode()).hexdigest()
-        receipt_id = hashlib.sha256(dumps([digest, artifact_manifest]).encode()).hexdigest()
-        connection.execute('''INSERT INTO facts.import_receipts
-            (id,catalog_digest,artifact_manifest,counts,synchronized_kinds,committed_at)
-            VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT(id) DO NOTHING''',
-            (receipt_id,digest,artifact_manifest,Jsonb(counts),Jsonb(kinds),synced_at))
         connection.execute('''INSERT INTO facts.mirror_state VALUES ('current',%s)
             ON CONFLICT(id) DO UPDATE SET receipt_id=excluded.receipt_id''', (receipt_id,))
     return {'synced_records': count, 'written_records': written, 'deleted_records': deleted,
             'synchronized_kinds': kinds, 'counts': counts, 'receipt_id': receipt_id,
             'catalog_digest': digest, 'artifact_manifest': artifact_manifest,
+            'migrations_applied': migrations, 'read_model': read_model,
             'artifacts': 'manifest linked; verify its delivery receipt' if artifact_manifest else 'local; not uploaded'}
 
 
@@ -178,13 +161,39 @@ def main():
     p.add_argument('--bundle',type=Path)
     p.add_argument('--snapshot')
     p.add_argument('--artifact-receipt',type=Path)
+    p.add_argument('--migrate',action='store_true',help='Apply pending PostgreSQL schema migrations only')
+    p.add_argument('--migration-status',action='store_true',help='Report applied/pending migrations without writing')
     args=p.parse_args()
+    if args.migrate or args.migration_status:
+        if args.apply:
+            p.error('--migrate/--migration-status cannot be combined with --apply')
+        return _run_migrations(apply=args.migrate)
     if args.apply and not (args.snapshot and args.bundle and args.artifact_receipt):
         p.error('--apply requires --snapshot, --bundle and the configured S3 --artifact-receipt')
     # Keep the snapshot check, mirror commit and local receipt under one root owner.
     # Read-only inspection must not create a writer lock or any storage directories.
     with writer_lock(args.root) if args.apply else contextlib.nullcontext():
         return _run_import(args)
+
+
+def _run_migrations(apply):
+    from .postgres_schema import status
+    url=os.environ.get('FACTS_DATABASE_URL')
+    if not url:raise SystemExit('Set FACTS_DATABASE_URL in the environment; do not pass credentials as command arguments.')
+    try:
+        import psycopg
+        with psycopg.connect(url) as conn:
+            applied=[]
+            if apply:
+                with conn.transaction():
+                    applied=migrate(conn,SYNC_LOCK)
+            else:
+                conn.read_only=True
+            print(json.dumps({'applied_now':applied,'migrations':status(conn)}))
+    except ValueError:
+        raise
+    except Exception as error:
+        raise SystemExit(f'PostgreSQL migration failed: {type(error).__name__}; inspect private diagnostics without printing connection credentials.')
 
 
 def _run_import(args):

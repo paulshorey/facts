@@ -309,3 +309,116 @@ with writer_lock(sys.argv[1]):
     # The importer releases ownership after the receipt, allowing the next writer.
     result=subprocess.run([sys.executable,'-c',writer,str(root)],capture_output=True,text=True)
     assert result.returncode==0
+
+
+def test_migrations_are_recorded_checksummed_and_reject_drift(postgres):
+    from facts import postgres_schema
+    with postgres.transaction():
+        assert postgres_schema.migrate(postgres, postgres_sync.SYNC_LOCK) == [1, 2]
+    with postgres.transaction():
+        assert postgres_schema.migrate(postgres, postgres_sync.SYNC_LOCK) == []
+    assert all(m["applied"] and m["checksum_matches"] for m in postgres_schema.status(postgres))
+    postgres.execute("UPDATE facts.schema_migrations SET checksum='changed' WHERE version=2")
+    with pytest.raises(ValueError, match="differs"):
+        with postgres.transaction():
+            postgres_schema.migrate(postgres, postgres_sync.SYNC_LOCK)
+    postgres.execute("UPDATE facts.schema_migrations SET checksum=%s WHERE version=2", (postgres_schema.checksum(postgres_schema.RESEARCH_SCHEMA),))
+    postgres.execute("INSERT INTO facts.schema_migrations (version,name,checksum) VALUES (99,'future','x')")
+    with pytest.raises(ValueError, match="newer"):
+        with postgres.transaction():
+            postgres_schema.migrate(postgres, postgres_sync.SYNC_LOCK)
+
+
+def test_migration_adopts_an_existing_unversioned_mirror(postgres):
+    postgres.execute(postgres_sync.SCHEMA)
+    postgres.execute("INSERT INTO facts.records VALUES ('topics','keep','keep','{}',now())")
+    from facts import postgres_schema
+    with postgres.transaction():
+        assert postgres_schema.migrate(postgres, postgres_sync.SYNC_LOCK) == [1, 2]
+    assert postgres.execute("SELECT id FROM facts.records").fetchone()[0] == "keep"
+
+
+def _series_fixture(store, tmp_path):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    from decimal import Decimal
+    from facts.contracts import SeriesDefinition
+    values = tmp_path / "storage/organized/tables/table-version_x.parquet"
+    values.parent.mkdir(parents=True, exist_ok=True)
+    decimal = pa.decimal128(38, 10)
+    rows = [{"series_id": sid, "dataset_id": "dataset_x", "period": period, "period_start": start, "period_end": end,
+             "calendar": "fiscal", "period_role": "unknown", "source_row": "8", "source_column": column,
+             "original_expression": raw, "source_value": Decimal(raw), "value": Decimal(raw) * 1000000,
+             "unit": "USD", "scale": "1000000", "basis": "net_outlays", "value_kind": "level", "warnings": "[]"}
+            for sid, period, start, end, column, raw in [("series_a", "2025", "2024-10-01", "2025-09-30", "c4", "17570"),
+                                                         ("series_a", "2026", "2025-10-01", "2026-09-30", "c5", "18270"),
+                                                         ("series_stale", "2026", None, None, "c6", "1")]]
+    schema = pa.schema([(k, decimal if k in ("source_value", "value") else pa.string()) for k in rows[0]])
+    pq.write_table(pa.Table.from_pylist(rows, schema=schema), values)
+    table = {"id": "dataset_x", "topic": "topic", "name": "Book.xlsx:Sheet", "mapping": {"orientation": "wide"},
+             "row_counts": {"normalized": 1}, "series_count": 1, "value_count": 2,
+             "values_artifact": "storage/organized/tables/table-version_x.parquet"}
+    store.db.execute("INSERT INTO organized_tables VALUES ('dataset_x','topic','digest','table-version_x','succeeded',?)", (dumps(table),))
+    store.save_record(SeriesDefinition(id="series_a", topic="topic", subtype="wide", title="Defense", detail="Book.xlsx:Sheet",
+        input_ids=["dataset_x"], dataset_id="dataset_x", metric="outlays", basis="net_outlays", unit="USD", scale="1000000",
+        unit_evidence="(in millions)", dimensions={"account": "Defense"}, hierarchy=[], row_role="detail", categories=["defense"],
+        references=[{"source_id": "source_x", "capture_id": "capture_x", "locator": {"row": "8"}}],
+        values_artifact=table["values_artifact"], processing={"method": "dataset_mapping"}), "table-version_x", "dataset:x")
+    store.db.commit()
+
+
+def test_sync_builds_typed_research_read_model_atomically(tmp_path, postgres):
+    store = OrganizedStore(tmp_path); add_topic(store)
+    observation = Observation(id="obs_1", topic="topic", title="Fund received $2 billion", detail="Reported stake.",
+        input_ids=["item_1"], categories=["investment"], dates=[{"role": "event", "original_expression": "May 2025",
+        "start": "2025-05-01", "end": "2025-05-31", "precision": "month"}, {"role": "publication", "original_expression": "2026",
+        "start": "2026-01-01"}],
+        measurements=[{"metric": "investment", "value": "2000000000", "original_expression": "$2 billion", "unit": "USD",
+        "scale": "1000000000"}, {"metric": "share", "value": "about half", "original_expression": "about half"}],
+        entities=[{"name": "MGX", "entity_type": "organization", "role": "investor"}],
+        attribution=[{"name": "Reuters", "role": "reported_by"}],
+        references=[{"source_id": "source_x", "capture_id": "capture_x", "url": "https://example.com/a", "locator": {"chunk": 0}}])
+    # An inactive earlier version must not appear in the read model.
+    store.save_record(Observation(id="obs_1", topic="topic", title="Old version", input_ids=["item_1"]), "v0", "item:1")
+    store.save_record(observation, "v1", "item:1")
+    store.db.commit()
+    group_observations(store)
+    _series_fixture(store, tmp_path)
+    first = postgres_sync.sync_records(store, postgres)
+    assert first["migrations_applied"] == [1, 2] and first["read_model"]["refreshed"]
+    counts = first["read_model"]["counts"]
+    assert counts["observations"] == 1 and counts["measurements"] == 2 and counts["series_values"] == 2
+    row = postgres.execute("SELECT version,title,event_start,event_end,categories FROM research.observations").fetchone()
+    assert row[0] == "v1" and row[1] == "Fund received $2 billion" and str(row[2]) == "2025-05-01" and str(row[3]) == "2025-05-31"
+    assert row[4] == ["investment"]
+    measures = postgres.execute("SELECT value,value_text,unit FROM research.measurements ORDER BY ordinal").fetchall()
+    assert measures[0][0] == 2000000000 and measures[1][0] is None and measures[1][1] == "about half"
+    assert postgres.execute("SELECT name,role FROM research.observation_entities").fetchone() == ("MGX", "investor")
+    assert postgres.execute("SELECT count(*) FROM research.observations WHERE search @@ plainto_tsquery('english','fund billion')").fetchone()[0] == 1
+    assert postgres.execute("SELECT count(*) FROM research.group_members").fetchone()[0] >= 1
+    points = postgres.execute("SELECT period,value,source_value,dataset_name FROM research.series_points ORDER BY period").fetchall()
+    assert [(p[0], int(p[1]), int(p[2]), p[3]) for p in points] == [("2025", 17570000000, 17570, "Book.xlsx:Sheet"),
+                                                                    ("2026", 18270000000, 18270, "Book.xlsx:Sheet")]
+    state = postgres.execute("SELECT receipt_id,model_version FROM research.refresh_state").fetchone()
+    assert state == (first["receipt_id"], "research-v1")
+    second = postgres_sync.sync_records(store, postgres)
+    assert second["receipt_id"] == first["receipt_id"] and not second["read_model"]["refreshed"]
+    store.db.execute("DELETE FROM organized_records WHERE id='obs_1'"); store.db.commit()
+    third = postgres_sync.sync_records(store, postgres)
+    assert third["read_model"]["refreshed"] and third["read_model"]["counts"]["observations"] == 0
+    assert postgres.execute("SELECT count(*) FROM research.measurements").fetchone()[0] == 0
+    assert postgres.execute("SELECT count(*) FROM research.series_values").fetchone()[0] == 2
+
+
+def test_read_model_failure_rolls_back_mirror_and_previous_model(tmp_path, postgres):
+    store = OrganizedStore(tmp_path); add_topic(store)
+    _series_fixture(store, tmp_path)
+    first = postgres_sync.sync_records(store, postgres)
+    before = postgres.execute("SELECT * FROM facts.records ORDER BY kind,id").fetchall()
+    (tmp_path / "storage/organized/tables/table-version_x.parquet").unlink()
+    store.db.execute("UPDATE topics SET payload=?", (dumps({"title": "after"}),)); store.db.commit()
+    with pytest.raises(FileNotFoundError):
+        postgres_sync.sync_records(store, postgres)
+    assert postgres.execute("SELECT * FROM facts.records ORDER BY kind,id").fetchall() == before
+    assert postgres.execute("SELECT receipt_id FROM research.refresh_state").fetchone()[0] == first["receipt_id"]
+    assert postgres.execute("SELECT count(*) FROM research.series_values").fetchone()[0] == 2
