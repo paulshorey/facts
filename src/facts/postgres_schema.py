@@ -367,6 +367,15 @@ def status(connection):
     """Read-only migration status; creates nothing."""
     exists = connection.execute("SELECT to_regclass('facts.schema_migrations') IS NOT NULL").fetchone()[0]
     applied = dict(connection.execute('SELECT version, checksum FROM facts.schema_migrations').fetchall()) if exists else {}
-    return [{'version': v, 'name': n, 'applied': v in applied,
+    known = {v for v, _, _ in MIGRATIONS}
+    rows = [{'version': v, 'name': n, 'applied': v in applied,
              'checksum_matches': applied.get(v) == checksum(s) if v in applied else None}
             for v, n, s in MIGRATIONS]
+    # Versions applied by newer code make this collector incompatible with the database.
+    rows += [{'version': v, 'name': None, 'applied': True, 'checksum_matches': None, 'unknown': True}
+             for v in sorted(set(applied) - known)]
+    return rows
+
+
+def compatible(rows):
+    return all(not r.get('unknown') and r['checksum_matches'] is not False for r in rows)

@@ -147,6 +147,12 @@ def validate_delivery(root, bundle, snapshot, receipt_path, destination):
     catalog=next(f for f in manifest['files'] if f['path']=='storage/catalog.sqlite')
     if digest_file(Path(root)/'storage/catalog.sqlite') != (catalog['sha256'],catalog['size']):
         raise ValueError('Sync a restored snapshot root to link its artifact manifest')
+    # The read model also loads the root's organized Parquet values; they must be the snapshot's bytes.
+    for entry in manifest['files']:
+        if entry['path'].startswith('storage/organized/tables/'):
+            path=Path(root)/entry['path']
+            if not path.is_file() or digest_file(path) != (entry['sha256'],entry['size']):
+                raise ValueError('Restored root organized table files differ from the snapshot manifest')
     receipt=json.loads(Path(receipt_path).read_text())
     if (receipt.get('snapshot') != snapshot or not receipt.get('verified_at')
             or receipt.get('destination') != destination
@@ -177,7 +183,7 @@ def main():
 
 
 def _run_migrations(apply):
-    from .postgres_schema import status
+    from .postgres_schema import compatible, status
     url=os.environ.get('FACTS_DATABASE_URL')
     if not url:raise SystemExit('Set FACTS_DATABASE_URL in the environment; do not pass credentials as command arguments.')
     try:
@@ -189,7 +195,9 @@ def _run_migrations(apply):
                     applied=migrate(conn,SYNC_LOCK)
             else:
                 conn.read_only=True
-            print(json.dumps({'applied_now':applied,'migrations':status(conn)}))
+            rows=status(conn)
+            print(json.dumps({'applied_now':applied,'compatible':compatible(rows),
+                              'pending':[r['version'] for r in rows if not r['applied']],'migrations':rows}))
     except ValueError:
         raise
     except Exception as error:

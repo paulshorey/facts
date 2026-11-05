@@ -422,3 +422,52 @@ def test_read_model_failure_rolls_back_mirror_and_previous_model(tmp_path, postg
     assert postgres.execute("SELECT * FROM facts.records ORDER BY kind,id").fetchall() == before
     assert postgres.execute("SELECT receipt_id FROM research.refresh_state").fetchone()[0] == first["receipt_id"]
     assert postgres.execute("SELECT count(*) FROM research.series_values").fetchone()[0] == 2
+
+
+def test_migration_status_reports_newer_database_as_incompatible(postgres):
+    from facts import postgres_schema
+    with postgres.transaction():
+        postgres_schema.migrate(postgres, postgres_sync.SYNC_LOCK)
+    assert postgres_schema.compatible(postgres_schema.status(postgres))
+    postgres.execute("INSERT INTO facts.schema_migrations (version,name,checksum) VALUES (99,'future','x')")
+    rows = postgres_schema.status(postgres)
+    assert rows[-1] == {'version': 99, 'name': None, 'applied': True, 'checksum_matches': None, 'unknown': True}
+    assert not postgres_schema.compatible(rows)
+
+
+def test_linked_import_rejects_altered_restored_parquet(tmp_path):
+    from facts import handoff
+    source = tmp_path/'source'; bundle = tmp_path/'bundle'; root = tmp_path/'restored'
+    store = OrganizedStore(source); add_topic(store); _series_fixture(store, source); store.db.close()
+    snapshot = handoff.backup(source, bundle)['snapshot']
+    handoff.restore(bundle, snapshot, root)
+    receipt = tmp_path/'receipt.json'
+    handoff.journal(receipt, {'snapshot': snapshot, 'destination': 's3:fixture.invalid/evidence/facts-v1',
+        'verified_objects': len({f['sha256'] for f in handoff.load_manifest(bundle, snapshot)['files']}),
+        'verified_at': '2026-11-05T00:00:00Z'})
+    destination = 's3:fixture.invalid/evidence/facts-v1'
+    postgres_sync.validate_delivery(root, bundle, snapshot, receipt, destination)
+    values = root/'storage/organized/tables/table-version_x.parquet'
+    values.write_bytes(values.read_bytes() + b'\0')
+    with pytest.raises(ValueError, match='organized table files differ'):
+        postgres_sync.validate_delivery(root, bundle, snapshot, receipt, destination)
+
+
+def test_read_model_omits_retired_entities_and_stale_groups(tmp_path, postgres):
+    store = OrganizedStore(tmp_path); add_topic(store)
+    for iid in ("a", "b"):
+        store.save_record(Observation(id=iid, topic="topic", title="Contract awarded", input_ids=[iid],
+            entities=[{"name": "Acme", "entity_type": "organization"}],
+            references=[{"source_id": "s", "url": f"https://example.com/{iid}", "locator": {}}]), "v1", "item:"+iid)
+    store.db.commit(); group_observations(store)
+    # Re-version "b" with another entity after grouping; its group membership is now stale.
+    store.save_record(Observation(id="b", topic="topic", title="Contract awarded", input_ids=["b"],
+        entities=[{"name": "Other Corp", "entity_type": "organization"}]), "v2", "item:b")
+    store.save_record(Observation(id="a", topic="topic", title="Contract awarded", input_ids=["a"],
+        entities=[{"name": "Other Corp", "entity_type": "organization"}]), "v2", "item:a")
+    store.db.commit()
+    assert store.db.execute("SELECT count(*) FROM organized_groups").fetchone()[0] >= 1
+    report = postgres_sync.sync_records(store, postgres)
+    names = {r[0] for r in postgres.execute("SELECT name FROM research.entities")}
+    assert names == {"Other Corp"}
+    assert report["read_model"]["counts"]["groups"] == 0 and report["read_model"]["counts"]["group_members"] == 0

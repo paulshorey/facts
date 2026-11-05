@@ -86,11 +86,11 @@ def collect(store, topic, limit, workers, *, maximum, input_rate, output_rate, r
                             error=f'http_{status}'
                     # Storage/transaction failures propagate out of the dispatcher.
                     # They must not be treated as another provider retry.
+                    rejected=error in {'http_401','http_403','http_429'}
                     with store.db:
                         artifact=store.put(raw)
                         if error:
                             split=core.split_job(store,row) if error=='output_truncated' else []
-                            rejected=error in {'http_401','http_403','http_429'}
                             state='running' if uncertain else ('queued' if rejected else ('split' if split else 'failed'))
                         else:
                             for index,item in enumerate(parsed.items):
@@ -101,6 +101,9 @@ def collect(store, topic, limit, workers, *, maximum, input_rate, output_rate, r
                                 store.db.execute('INSERT OR IGNORE INTO followups VALUES (?,?,?)',(topic,query,row['id']))
                             state='succeeded'
                         store.db.execute('UPDATE extraction_jobs SET state=?,artifact=?,error=? WHERE id=?',(state,artifact,error,row['id']))
+                        if error and rejected:
+                            # A pre-inference refusal is not a paid attempt; keep the job eligible.
+                            store.db.execute('UPDATE extraction_jobs SET attempts=max(attempts-1,0) WHERE id=?',(row['id'],))
                         store.attempt('normalize',row['id'],state,artifact,{'usage':raw.get('usage'),'model':core.MODEL,
                             'error':error,'run_id':report['id']})
                     report['completed']+=1

@@ -115,21 +115,24 @@ def refresh(store, connection, receipt_id):
             counts.setdefault(table, 0)
         return _finish(connection, receipt_id, counts)
 
-    entities = {}
-    for row in db.execute("SELECT id,payload FROM organized_entities ORDER BY id"):
-        entities[row["id"]] = _json(row["payload"])
-    _copy(connection, "entities", ("id", "name", "entity_type", "aliases", "payload"),
-          ((k, v["name"], v.get("entity_type", "unknown"), v.get("aliases", []), Jsonb(v)) for k, v in entities.items()), counts)
-    _copy(connection, "entity_aliases", ("entity_id", "alias", "entity_type"),
-          (tuple(r) for r in db.execute("SELECT entity_id,alias,entity_type FROM organized_aliases ORDER BY 1,2")
-           if r["entity_id"] in entities), counts)
-
     observations, versions = [], {}
     series = []
     for row in db.execute("SELECT payload FROM organized_records WHERE active=1 ORDER BY id"):
         payload = _json(row["payload"])
         versions[payload["id"]] = payload["processing"]["version"]
         (series if payload["record_type"] == "series" else observations).append(payload)
+
+    # Only entities linked from active observations; retired versions leave entities behind locally.
+    linked = {e.get("entity_id") for p in observations for e in p.get("entities", []) if e.get("entity_id")}
+    entities = {}
+    for row in db.execute("SELECT id,payload FROM organized_entities ORDER BY id"):
+        if row["id"] in linked:
+            entities[row["id"]] = _json(row["payload"])
+    _copy(connection, "entities", ("id", "name", "entity_type", "aliases", "payload"),
+          ((k, v["name"], v.get("entity_type", "unknown"), v.get("aliases", []), Jsonb(v)) for k, v in entities.items()), counts)
+    _copy(connection, "entity_aliases", ("entity_id", "alias", "entity_type"),
+          (tuple(r) for r in db.execute("SELECT entity_id,alias,entity_type FROM organized_aliases ORDER BY 1,2")
+           if r["entity_id"] in entities), counts)
 
     def observation_rows():
         for p in observations:
@@ -172,22 +175,32 @@ def refresh(store, connection, receipt_id):
     for row in db.execute("SELECT payload FROM organized_groups ORDER BY id"):
         payload = _json(row["payload"])
         groups[payload["id"]] = payload
-    _copy(connection, "groups", ("id", "topic", "group_kind", "title", "category", "anchor_id", "observation_count",
-                                 "source_url_count", "version", "payload"),
-          ((g["id"], g["topic"], g["group_kind"], g["title"], g.get("category"), g.get("anchor_id"), g["observation_count"],
-            g.get("source_url_count"), g.get("version"), Jsonb(g)) for g in groups.values()), counts)
-    observation_ids = {p["id"] for p in observations}
+    by_id = {p["id"]: p for p in observations}
+    current = []
+    for row in db.execute("SELECT group_id,record_id,relation FROM organized_memberships ORDER BY 1,2,3"):
+        group = groups.get(row["group_id"])
+        if group is None or row["record_id"] not in by_id:
+            continue
+        expected = (group.get("member_versions") or {}).get(row["record_id"])
+        if expected and expected != versions.get(row["record_id"]):
+            continue
+        current.append((row["group_id"], row["record_id"], row["relation"]))
+    members_of = {}
+    for gid, rid, _ in current:
+        members_of.setdefault(gid, set()).add(rid)
 
-    def members():
-        for row in db.execute("SELECT group_id,record_id,relation FROM organized_memberships ORDER BY 1,2,3"):
-            group = groups.get(row["group_id"])
-            if group is None or row["record_id"] not in observation_ids:
+    def group_rows():
+        # Stale groups (no current members) are omitted; counts describe current members only.
+        for gid, g in groups.items():
+            ids = members_of.get(gid)
+            if not ids:
                 continue
-            expected = (group.get("member_versions") or {}).get(row["record_id"])
-            if expected and expected != versions.get(row["record_id"]):
-                continue
-            yield row["group_id"], row["record_id"], row["relation"]
-    _copy(connection, "group_members", ("group_id", "observation_id", "relation"), members(), counts)
+            urls = {r.get("url") for rid in ids for r in by_id[rid].get("references", []) if r.get("url")}
+            yield (gid, g["topic"], g["group_kind"], g["title"], g.get("category"), g.get("anchor_id"), len(ids),
+                   len(urls), g.get("version"), Jsonb(g))
+    _copy(connection, "groups", ("id", "topic", "group_kind", "title", "category", "anchor_id", "observation_count",
+                                 "source_url_count", "version", "payload"), group_rows(), counts)
+    _copy(connection, "group_members", ("group_id", "observation_id", "relation"), iter(current), counts)
 
     tables = [_json(r["payload"]) | {"_state": r["state"], "_version": r["version"]}
               for r in db.execute("SELECT state,version,payload FROM organized_tables ORDER BY id")]

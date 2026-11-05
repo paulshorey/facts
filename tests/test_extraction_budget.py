@@ -134,3 +134,21 @@ def test_rate_limit_retries_do_not_consume_server_retry_allowance(monkeypatch):
     statuses[:]=[503,503,503]
     with pytest.raises(httpx.HTTPStatusError):
         core.llm_extract('text', {})
+
+
+def test_repeated_refusals_do_not_strand_a_job(queue, monkeypatch):
+    import httpx
+    def refuse(text, *args, **kwargs):
+        response=httpx.Response(429, request=httpx.Request('POST','https://api.fireworks.ai/x'))
+        raise httpx.HTTPStatusError('rejected', request=response.request, response=response)
+    monkeypatch.setattr(core, 'llm_extract', refuse)
+    options=dict(maximum=1, input_rate='.15', output_rate='.5', existing_only=True)
+    for _ in range(3):
+        core.normalize(queue, 'topic', 3, 1, **options)
+    assert tuple(queue.db.execute("SELECT state,attempts FROM extraction_jobs WHERE id='1'").fetchone()) == ('queued', 0)
+    calls=[]
+    def succeed(text, *args, **kwargs):
+        calls.append(text); return {}, core.Extraction(items=[]), None
+    monkeypatch.setattr(core, 'llm_extract', succeed)
+    core.normalize(queue, 'topic', 3, 1, **options)
+    assert 'source text 1' in calls
