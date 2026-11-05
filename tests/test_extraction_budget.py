@@ -209,3 +209,24 @@ def test_uncertain_run_state_survives_a_later_refusal_in_the_same_batch(queue, m
     assert report['state']=='provider_uncertain'
     states=dict(queue.db.execute("SELECT id,state FROM extraction_jobs WHERE id IN ('1','2')"))
     assert states=={'1':'running','2':'queued'}
+
+
+def test_triage_keeps_duplicate_chunks_the_kept_capture_no_longer_covers(tmp_path):
+    from facts import triage
+    store=core.Store(tmp_path);store.db.execute("INSERT INTO topics VALUES ('topic','{}')")
+    body='Long disclosure text. '*40
+    jobs={}
+    for name,states in [('a',['succeeded','failed']),('b',['queued','queued'])]:
+        sid=store.source('topic','https://example.com/'+name);cid=store.capture(sid,'direct_http',b'raw',body)
+        for chunk,state in enumerate(states):
+            jid=f'{name}{chunk}';jobs[jid]=state
+            store.db.execute('''INSERT INTO extraction_jobs(id,topic,capture,chunk,text_artifact,prompt_version,state)
+                VALUES (?,'topic',?,?,?,'fixture',?)''',(jid,cid,chunk,store.put(body+str(chunk)),state))
+    store.db.commit()
+    decisions=triage.plan(store,'topic')
+    # Capture b covers both chunks, so it is kept and nothing of it is deferred.
+    assert decisions=={}
+    store.db.execute("UPDATE extraction_jobs SET state='queued' WHERE id='a1'")
+    store.db.execute("UPDATE extraction_jobs SET state='failed' WHERE id='b0'");store.db.commit()
+    # a covers both chunks (and has completed work); b's chunk 1 is deferred, not its uncovered chunk 0.
+    assert set(triage.plan(store,'topic')) == {'b1'}

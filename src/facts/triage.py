@@ -23,7 +23,7 @@ def _normalized_digest(store, artifact):
 def plan(store, topic):
     """Return {job_id: (reason, evidence)} for queued jobs worth deferring."""
     db = store.db
-    rows = db.execute("""SELECT j.id, j.capture, c.source, c.text_artifact, c.acquired
+    rows = db.execute("""SELECT j.id, j.capture, j.chunk, c.source, c.text_artifact, c.acquired
         FROM extraction_jobs j JOIN captures c ON c.id=j.capture
         WHERE j.topic=? AND j.state='queued' ORDER BY j.id""", (topic,)).fetchall()
     datasets = {r[0] for r in db.execute("SELECT source FROM datasets WHERE topic=? AND source IS NOT NULL", (topic,))}
@@ -45,9 +45,16 @@ def plan(store, topic):
             digest, _ = _normalized_digest(store, row["text_artifact"])
             if digest in by_digest:
                 by_digest[digest].append(row["id"])
+    # Chunk indexes a capture still covers: some job for that chunk is pending or done.
+    covered = defaultdict(set)
+    for row in db.execute("""SELECT capture, chunk FROM extraction_jobs
+            WHERE topic=? AND state IN ('queued','running','succeeded','split')""", (topic,)):
+        covered[row["capture"]].add(row["chunk"])
     keeper = {}
     for digest, group in by_digest.items():
-        chosen = sorted(set(group), key=lambda c: (-done.get(c, 0), c))[0]
+        group = sorted(set(group))
+        # Prefer the capture covering the most chunks, then the most completed work.
+        chosen = sorted(group, key=lambda c: (-len(covered[c]), -done.get(c, 0), c))[0]
         for capture in group:
             keeper[capture] = chosen
     decisions = {}
@@ -57,7 +64,9 @@ def plan(store, topic):
             decisions[row["id"]] = ("insufficient_text", {"capture": row["capture"], "chars": info["size"]})
         elif info["source"] in datasets:
             decisions[row["id"]] = ("structured_dataset", {"capture": row["capture"], "source": info["source"]})
-        elif keeper.get(row["capture"], row["capture"]) != row["capture"]:
+        elif (keeper.get(row["capture"], row["capture"]) != row["capture"]
+              and row["chunk"] in covered[keeper[row["capture"]]]):
+            # Defer per chunk: a chunk the kept capture no longer covers stays queued here.
             decisions[row["id"]] = ("duplicate_capture_text", {"capture": row["capture"], "kept_capture": keeper[row["capture"]],
                                                                "normalized_text_sha256": info["digest"]})
     return decisions
