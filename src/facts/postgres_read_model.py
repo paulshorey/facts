@@ -14,6 +14,7 @@ from decimal import Decimal, InvalidOperation
 from urllib.parse import urlsplit
 
 MODEL_VERSION = "research-v1"
+NON_EVENT_ROLES = {"publication", "report", "acquisition", "reporting_period", "unknown", "article_date", "publication_date"}
 NUMBER = re.compile(r"-?\d+(\.\d+)?([eE][-+]?\d+)?")
 # Children before parents for deletion; reversed for loading.
 TABLES = ("series_values", "series", "datasets", "group_members", "groups", "observation_sources",
@@ -136,8 +137,9 @@ def refresh(store, connection, receipt_id):
 
     def observation_rows():
         for p in observations:
-            # Publication/acquisition dates are provenance, not the event window (matches the local index).
-            dates = [d for d in p.get("dates", []) if (d.get("start") or d.get("end")) and d.get("role") not in {"publication", "acquisition"}]
+            # Provenance, reporting-period and unknown-role dates are not the event window
+            # (same exclusions as temporal classification and grouping); all dates stay in observation_dates.
+            dates = [d for d in p.get("dates", []) if (d.get("start") or d.get("end")) and d.get("role") not in NON_EVENT_ROLES]
             starts = [_date(d.get("start")) for d in dates if _date(d.get("start"))]
             ends = [_date(d.get("end") or d.get("start")) for d in dates if _date(d.get("end") or d.get("start"))]
             yield (p["id"], p["processing"]["version"], p["topic"], p["record_type"], p["content_role"], p["kind"],

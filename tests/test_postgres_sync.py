@@ -372,7 +372,8 @@ def test_sync_builds_typed_research_read_model_atomically(tmp_path, postgres):
     observation = Observation(id="obs_1", topic="topic", title="Fund received $2 billion", detail="Reported stake.",
         input_ids=["item_1"], categories=["investment"], dates=[{"role": "event", "original_expression": "May 2025",
         "start": "2025-05-01", "end": "2025-05-31", "precision": "month"}, {"role": "publication", "original_expression": "2026",
-        "start": "2026-01-01"}],
+        "start": "2026-01-01"}, {"role": "reporting_period", "original_expression": "FY2026", "start": "2025-10-01",
+        "end": "2026-09-30"}, {"role": "unknown", "original_expression": "2019", "start": "2019-01-01"}],
         measurements=[{"metric": "investment", "value": "2000000000", "original_expression": "$2 billion", "unit": "USD",
         "scale": "1000000000"}, {"metric": "share", "value": "about half", "original_expression": "about half"}],
         entities=[{"name": "MGX", "entity_type": "organization", "role": "investor"}],
@@ -391,6 +392,7 @@ def test_sync_builds_typed_research_read_model_atomically(tmp_path, postgres):
     row = postgres.execute("SELECT version,title,event_start,event_end,categories FROM research.observations").fetchone()
     assert row[0] == "v1" and row[1] == "Fund received $2 billion" and str(row[2]) == "2025-05-01" and str(row[3]) == "2025-05-31"
     assert row[4] == ["investment"]
+    assert postgres.execute("SELECT count(*) FROM research.observation_dates").fetchone()[0] == 4
     measures = postgres.execute("SELECT value,value_text,unit FROM research.measurements ORDER BY ordinal").fetchall()
     assert measures[0][0] == 2000000000 and measures[1][0] is None and measures[1][1] == "about half"
     assert postgres.execute("SELECT name,role FROM research.observation_entities").fetchone() == ("MGX", "investor")
