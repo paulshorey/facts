@@ -64,9 +64,10 @@ def _number(value):
     _, digits, exponent = number.as_tuple()
     text = "".join(map(str, digits))
     trailing = len(text) - len(text.rstrip("0"))
-    significant, exponent = len(digits) - trailing, exponent + trailing
+    exponent += trailing
     scale = max(0, -exponent)
-    if number.adjusted() >= 131072 or scale > 16383 or significant > 1000:
+    # Unconstrained numeric has no 1,000-digit precision cap (that applies to numeric(p,s)).
+    if number.adjusted() >= 131072 or scale > 16383:
         return None
     return number
 
