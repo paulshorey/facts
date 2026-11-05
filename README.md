@@ -71,9 +71,14 @@ Failed jobs are excluded unless `--retry-failed` is supplied. A cost reservation
 and `running` job state commit before submission; interrupted uncertain jobs are
 left `running` for manual evidence recovery, not automatically retried. Inspect
 their `normalize_reservation` attempts and saved outputs before deciding whether
-to retry. Transport, HTTP and response-parsing exceptions also preserve `running`
+to retry. Transport, other HTTP and response-parsing exceptions also preserve `running`
 and stop new dispatch because an exception alone does not establish that no paid
-request completed. Even `--retry-failed` excludes these uncertain jobs. Completed
+request completed. A *received* 401, 403 or 429 response is a refusal before
+inference: the job returns to `queued` with `http_<status>` and the saved status,
+body excerpt and rate-limit headers, and dispatch stops. A 429 is retried up to six
+times, honoring `Retry-After` (at most 60 s), without consuming the two 502/503/504
+retries the reservation covers. Fireworks reported a 90,000 generated-token/minute
+limit for this account in November 2026; four workers stayed under it, six did not. Even `--retry-failed` excludes these uncertain jobs. Completed
 responses with an invalid extraction schema remain explicit failed jobs. Storage failures stop dispatch; other already submitted bounded requests
 may finish, but no replacement request is launched. No sync/crawl/batch loop is
 started on failure. Truncated outputs split into smaller tasks; all original input

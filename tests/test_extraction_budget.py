@@ -97,3 +97,40 @@ def test_ambiguous_provider_failure_remains_running_even_with_explicit_retry(que
     core.normalize(queue, 'topic', 3, 1, retry_failed=True, **options)
     assert calls == ['source text 1', 'source text 0', 'source text 2']
     assert queue.db.execute("SELECT state FROM extraction_jobs WHERE id='1'").fetchone()[0] == 'running'
+
+
+@pytest.mark.parametrize('status', [401, 403, 429])
+def test_received_rejection_requeues_job_records_status_and_stops(queue, monkeypatch, status):
+    import httpx
+    calls=[]
+    def request(text, *args, **kwargs):
+        calls.append(text)
+        response=httpx.Response(status, headers={'x-ratelimit-over-limit':'yes','retry-after':'7'}, text='slow down',
+                                request=httpx.Request('POST','https://api.fireworks.ai/inference/v1/chat/completions'))
+        raise httpx.HTTPStatusError('rejected', request=response.request, response=response)
+    monkeypatch.setattr(core, 'llm_extract', request)
+    report=core.normalize(queue, 'topic', 3, 1, maximum=1, input_rate='.15', output_rate='.5', existing_only=True)
+    assert report['state'] == 'provider_stopped' and calls == ['source text 1']
+    state, error, artifact = queue.db.execute("SELECT state,error,artifact FROM extraction_jobs WHERE id='1'").fetchone()
+    assert (state, error) == ('queued', f'http_{status}')
+    saved = json.loads((queue.root/artifact).read_text())
+    assert saved['status'] == status and saved['body'] == 'slow down' and saved['rate_limit']['retry-after'] == '7'
+    assert queue.db.execute("SELECT state FROM extraction_jobs WHERE id='2'").fetchone()[0] == 'queued'
+
+
+def test_rate_limit_retries_do_not_consume_server_retry_allowance(monkeypatch):
+    import httpx
+    monkeypatch.setenv('FIREWORKS_API_KEY','fixture-no-network')
+    monkeypatch.setattr(core.time, 'sleep', lambda seconds: None)
+    statuses=[429,429,429,503,503,200]
+    payload={'choices':[{'finish_reason':'stop','message':{'content':json.dumps({'items':[{'title':'Saved'}]})}}]}
+    def post(self, url, **kwargs):
+        code=statuses.pop(0)
+        return httpx.Response(code, json=payload if code==200 else {}, request=httpx.Request('POST', url))
+    monkeypatch.setattr(httpx.Client, 'post', post)
+    data, parsed, error = core.llm_extract('text', {})
+    assert error is None and parsed.items[0].title == 'Saved'
+    assert [h['status'] for h in data['_collection_request_history']] == [429,429,429,503,503,200]
+    statuses[:]=[503,503,503]
+    with pytest.raises(httpx.HTTPStatusError):
+        core.llm_extract('text', {})

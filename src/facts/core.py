@@ -378,18 +378,25 @@ def llm_extract(chunk, topic, max_tokens=6500, *, body=None):
     body = body or extraction_body(chunk, topic, max_tokens)
     with httpx.Client(timeout=150) as client:
         request_history=[]
-        for attempt in range(3):
+        # A 429 is refused before inference, so it gets patient retries without
+        # consuming the three-request allowance that the cost reservation covers.
+        rate_retries = server_retries = 0
+        while True:
             response = client.post("https://api.fireworks.ai/inference/v1/chat/completions", headers={"Authorization": "Bearer " + os.environ["FIREWORKS_API_KEY"]}, json=body)
             request_history.append({'status':response.status_code,'at':now()})
-            if response.status_code in (429,502,503,504) and attempt<2:
-                try:delay=float(response.headers.get('retry-after',3*(2**attempt)))
-                except ValueError:delay=3*(2**attempt)
-                time.sleep(min(max(delay,1),30))
-                continue
-            response.raise_for_status()
-            data = response.json()
-            data['_collection_request_history']=request_history
-            break
+            status = response.status_code
+            retry = (status == 429 and rate_retries < 6) or (status in (502,503,504) and server_retries < 2)
+            if not retry:
+                break
+            count = rate_retries if status == 429 else server_retries
+            try:delay=float(response.headers.get('retry-after',3*(2**count)))
+            except ValueError:delay=3*(2**count)
+            time.sleep(min(max(delay,1),60))
+            if status == 429: rate_retries += 1
+            else: server_retries += 1
+        response.raise_for_status()
+        data = response.json()
+        data['_collection_request_history']=request_history
     choice = data["choices"][0]
     if choice.get("finish_reason") == "length":
         return data, None, "output_truncated"

@@ -75,16 +75,23 @@ def collect(store, topic, limit, workers, *, maximum, input_rate, output_rate, r
                         # reservation for manual recovery, including with --retry-failed.
                         uncertain = True; stopped = True; report['state']='provider_uncertain'
                         raw={'error_class':type(failure).__name__};parsed=None;error=type(failure).__name__
-                        status=getattr(getattr(failure,'response',None),'status_code',None)
+                        response=getattr(failure,'response',None)
+                        status=getattr(response,'status_code',None)
                         if status in {401,403,429}:
-                            stopped=True;report['state']='provider_stopped'
+                            # A received auth/rate-limit rejection is a definitive refusal before
+                            # inference, not an unknown outcome: requeue the job and stop dispatch.
+                            uncertain=False;stopped=True;report['state']='provider_stopped'
+                            raw.update(status=status,body=(response.text or '')[:2000],
+                                       rate_limit={k:v for k,v in response.headers.items() if 'ratelimit' in k.lower() or k.lower()=='retry-after'})
+                            error=f'http_{status}'
                     # Storage/transaction failures propagate out of the dispatcher.
                     # They must not be treated as another provider retry.
                     with store.db:
                         artifact=store.put(raw)
                         if error:
                             split=core.split_job(store,row) if error=='output_truncated' else []
-                            state='running' if uncertain else ('split' if split else 'failed')
+                            rejected=error in {'http_401','http_403','http_429'}
+                            state='running' if uncertain else ('queued' if rejected else ('split' if split else 'failed'))
                         else:
                             for index,item in enumerate(parsed.items):
                                 store.item(topic,row['source'],row['capture'],item.model_dump(),{'type':'extracted_chunk',
