@@ -376,7 +376,9 @@ def extraction_body(chunk, topic, max_tokens=6500):
 
 def llm_extract(chunk, topic, max_tokens=6500, *, body=None):
     body = body or extraction_body(chunk, topic, max_tokens)
-    with httpx.Client(timeout=150) as client:
+    # Full 6,500-token responses can exceed 150 s under provider load; a read timeout
+    # leaves an uncertain (possibly billed) job, so allow the response time to finish.
+    with httpx.Client(timeout=httpx.Timeout(300, connect=30)) as client:
         request_history=[]
         # A 429 is refused before inference, so it gets patient retries without
         # consuming the three-request allowance that the cost reservation covers.
