@@ -492,6 +492,8 @@ def test_unlinked_retry_revalidates_parquet_even_with_an_unchanged_catalog(tmp_p
 def test_read_model_number_bounds_and_current_group_anchor(tmp_path, postgres):
     from facts import postgres_read_model as model
     assert model._number("1e1000000") is None and model._number("1e-20000") is None
+    assert model._number("1.1e-16383") is None and model._number("1e-16383") is not None
+    assert model._number("1.5000e3") == 1500
     assert model._number("12.50") == 12.5 and model._number("0") == 0 and model._number("about 3") is None
     store = OrganizedStore(tmp_path); add_topic(store)
     for iid in ("a", "b"):

@@ -58,8 +58,15 @@ def _number(value):
     # beyond stays untyped (value_text keeps it) rather than aborting the whole import.
     if not number.is_finite() or number.is_zero():
         return number if number.is_finite() else None
-    exponent = number.adjusted()
-    if exponent >= 131072 or -exponent > 16383 or len(number.as_tuple().digits) > 1000:
+    # Check both the integer digits (adjusted exponent) and the effective scale
+    # (fractional digits after dropping insignificant trailing zeros).
+    # Computed from the digit tuple: Decimal.normalize() can overflow the default context.
+    _, digits, exponent = number.as_tuple()
+    text = "".join(map(str, digits))
+    trailing = len(text) - len(text.rstrip("0"))
+    significant, exponent = len(digits) - trailing, exponent + trailing
+    scale = max(0, -exponent)
+    if number.adjusted() >= 131072 or scale > 16383 or significant > 1000:
         return None
     return number
 
