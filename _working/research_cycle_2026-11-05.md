@@ -48,14 +48,35 @@ under `storage/recovery-proof/2026-11-04/` (logs, fingerprints, audits, receipts
   197,393 measurements, 171,750 entity mentions, 907,302 series values). A repeat
   import wrote 0 records and reused the receipt.
 
+## Semantic organization and second publication (November 5–6)
+
+- `organize --incremental --max-cost-usd 150 --workers 6` (detached) finished on
+  November 6 at 09:25 UTC for **≈ $56.16** (semantic $32.16; grouping ≈ $24).
+  Coverage: 142,995 items semantic, 589 semantic-unresolved (validation rejections
+  such as uncited expressions; their deterministic records remain), 9,040 deterministic.
+  609 semantic jobs failed terminally. 14,733 grouping jobs left `queued` by the
+  earlier cached-only pass are superseded contexts, not pending work.
+- Result: 152,647 observations; 132,623 groups, 22,078 with several members. Trump topic
+  categories led by disclosures (31k), trading (12.7k), regulatory actions, crypto
+  and business deals.
+- Audit passed (148,037 artifact references). Snapshot
+  `9c04bbbf377d132611730b7bdf9cda9d6808bc0140c8ba9e87b546f13bf55359` (149,531 files,
+  10.1 GB). An `EndpointConnectionError` interrupted delivery once (around a host
+  restart); a resumed delivery verified all 148,212 objects. The independent
+  receive/restore/audit matched active digest `07fdb97d…`.
+- Linked import receipt `1afeaaeca9a44ccb5816361224f7b2a2ef179f11cc8dda6ffe62df75982f199f`:
+  3,121,356 mirrored records (130,880 superseded removed), read model rebuilt
+  (154,315 observations, 268,678 measurements, 232,246 entity mentions, 44,924
+  entities, 350,340 group memberships, 907,302 series values). A repeat import wrote 0.
+  Database 7.1 GB; volume 11.1 of 50 GB.
+
 ## Next
 
-1. Let the semantic/grouping organization pass finish (started detached after this
-   import; see its log in the evidence folder). Then run `export --organized` →
-   `facts-handoff backup` → `deliver` → `receive`/`restore`/audit → linked import.
-2. Replace LLM itemization of the Budget Appendix and OGE 278e transactions with
+1. Replace LLM itemization of the Budget Appendix and OGE 278e transactions with
    deterministic table parsers.
-3. Make the collector root configurable (`FACTS_ROOT`) and let the import gate accept
+2. Make the collector root configurable (`FACTS_ROOT`) and let the import gate accept
    any verified off-machine destination (S3 is optional off-site backup only).
-4. Grouping does one FTS query per observation (~0.04 s each, about 1.5 h per pass at
-   this size); cache candidate searches by input digest before the corpus grows further.
+3. Grouping runs one FTS query per observation (about 1.5 h per pass at this size);
+   cache candidate searches by input digest before the corpus grows further.
+4. Review the 589 semantic-unresolved items and 6 failed extraction chunks; decide
+   whether a targeted `--retry-failed` is worthwhile.
