@@ -5,6 +5,12 @@ and current topic definitions before collecting. Save supplied allegations,
 estimates, and quotations as observations without an editorial approval gate;
 do not convert them into conclusions.
 
+## Workspace
+
+Prefer the primary local checkout when free; use a worktree when another task is
+using it. After merging a PR, return the primary checkout to `main` and run
+`git pull --ff-only` when free, leaving it clean.
+
 ## Collection and storage
 
 - Use `.venv/bin/python` and `.venv/bin/facts`; system Python lacks dependencies.
