@@ -5,6 +5,8 @@ import json
 import os
 from uuid import uuid4
 
+import httpx
+
 from . import core
 
 
@@ -73,18 +75,32 @@ def collect(store, topic, limit, workers, *, maximum, input_rate, output_rate, r
                     except Exception as failure:
                         # No response proves completion/rejection. Preserve the running
                         # reservation for manual recovery, including with --retry-failed.
-                        uncertain = True; stopped = True; report['state']='provider_uncertain'
                         raw={'error_class':type(failure).__name__};parsed=None;error=type(failure).__name__
-                        status=getattr(getattr(failure,'response',None),'status_code',None)
+                        response=getattr(failure,'response',None)
+                        status=getattr(response,'status_code',None)
+                        stopped = True
                         if status in {401,403,429}:
-                            stopped=True;report['state']='provider_stopped'
+                            # A received auth/rate-limit rejection is a definitive refusal before
+                            # inference, not an unknown outcome: requeue the job and stop dispatch.
+                            # An unknown outcome elsewhere in this run keeps precedence.
+                            if report['state']!='provider_uncertain':report['state']='provider_stopped'
+                            raw.update(status=status,body=(response.text or '')[:2000],
+                                       rate_limit={k:v for k,v in response.headers.items() if 'ratelimit' in k.lower() or k.lower()=='retry-after'})
+                            error=f'http_{status}'
+                        elif isinstance(failure,(httpx.ConnectError,httpx.ConnectTimeout)):
+                            # The connection never opened, so nothing was sent or billed.
+                            if report['state']!='provider_uncertain':report['state']='provider_unreachable'
+                            error='connect_failed'
+                        else:
+                            uncertain = True; report['state']='provider_uncertain'
                     # Storage/transaction failures propagate out of the dispatcher.
                     # They must not be treated as another provider retry.
+                    rejected=error in {'http_401','http_403','http_429','connect_failed'}
                     with store.db:
                         artifact=store.put(raw)
                         if error:
                             split=core.split_job(store,row) if error=='output_truncated' else []
-                            state='running' if uncertain else ('split' if split else 'failed')
+                            state='running' if uncertain else ('queued' if rejected else ('split' if split else 'failed'))
                         else:
                             for index,item in enumerate(parsed.items):
                                 store.item(topic,row['source'],row['capture'],item.model_dump(),{'type':'extracted_chunk',
@@ -94,6 +110,9 @@ def collect(store, topic, limit, workers, *, maximum, input_rate, output_rate, r
                                 store.db.execute('INSERT OR IGNORE INTO followups VALUES (?,?,?)',(topic,query,row['id']))
                             state='succeeded'
                         store.db.execute('UPDATE extraction_jobs SET state=?,artifact=?,error=? WHERE id=?',(state,artifact,error,row['id']))
+                        if error and rejected:
+                            # A pre-inference refusal is not a paid attempt; keep the job eligible.
+                            store.db.execute('UPDATE extraction_jobs SET attempts=max(attempts-1,0) WHERE id=?',(row['id'],))
                         store.attempt('normalize',row['id'],state,artifact,{'usage':raw.get('usage'),'model':core.MODEL,
                             'error':error,'run_id':report['id']})
                     report['completed']+=1

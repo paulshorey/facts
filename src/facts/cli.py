@@ -6,7 +6,7 @@ from .core import Store, search, capture_sources, fallback_extract, normalize, e
 
 def main():
     parser = argparse.ArgumentParser(description="Source-preserving itemized research collector")
-    parser.add_argument("command", choices=["init", "search", "capture", "fallback", "normalize", "repair-truncated", "export", "status", "import", "items", "sources", "organize", "series"])
+    parser.add_argument("command", choices=["init", "search", "capture", "fallback", "normalize", "repair-truncated", "export", "status", "import", "items", "sources", "organize", "series", "triage"])
     parser.add_argument("--topic", default="all")
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--workers", type=int, default=0)
@@ -34,6 +34,8 @@ def main():
     parser.add_argument("--date-from")
     parser.add_argument("--date-to")
     parser.add_argument("--period")
+    parser.add_argument("--apply", action="store_true", help="triage: defer the planned jobs (default is a dry run)")
+    parser.add_argument("--restore", nargs="?", const="all", help="triage: return deferred jobs (optionally one reason) to the queue")
     args = parser.parse_args()
     if (args.dry_run or args.pilot or args.incremental or args.no_llm or args.model or args.cached_only) and args.command != "organize":
         parser.error("Organization processing options require the organize command")
@@ -43,6 +45,12 @@ def main():
         parser.error("normalize requires one --topic, positive --limit and explicit --max-cost-usd")
     if (args.existing_only or args.input_usd_per_million is not None or args.output_usd_per_million is not None) and args.command != "normalize":
         parser.error("Extraction rates/--existing-only require normalize")
+    if (args.apply or args.restore) and args.command != "triage":
+        parser.error("--apply/--restore require triage")
+    if args.apply and args.restore:
+        parser.error("Choose --apply or --restore")
+    if args.command == "triage" and args.topic == "all":
+        parser.error("triage requires one --topic")
     if args.dry_run and args.pilot:
         parser.error("Choose --dry-run or --pilot")
     if args.organized and args.command != "export":
@@ -75,7 +83,34 @@ def main():
         for value in query_series(topic=args.topic, period=args.period, basis=args.basis, limit=args.limit or 20):
             print(dumps(value))
         return
+    if args.command == "triage":
+        return triage_command(args)
     return collector_command(args)
+
+
+def triage_command(args):
+    from . import triage
+    from .core import ROOT
+    if not (args.apply or args.restore):
+        # A preview must not load topic files, create searches or run DDL.
+        reader = triage.CatalogReader(ROOT)
+        try:
+            decisions = triage.plan(reader, args.topic)
+        finally:
+            reader.db.close()
+        print(json.dumps({"topic": args.topic, "applied": False, "deferred": triage.summarize(decisions)})); return
+    return triage_write(args)
+
+
+@exclusive_writer
+def triage_write(args):
+    from . import triage
+    store = Store()
+    if args.restore:
+        print(json.dumps({"restored": triage.restore(store, args.topic, None if args.restore == "all" else args.restore)})); return
+    decisions = triage.plan(store, args.topic)
+    triage.apply(store, args.topic, decisions)
+    print(json.dumps({"topic": args.topic, "applied": True, "deferred": triage.summarize(decisions)}))
 
 
 @exclusive_writer

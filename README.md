@@ -6,8 +6,9 @@ spending categories, expense rows, and attributed estimates. The original design
 is in [`_working/initial_research_framework.md`](_working/initial_research_framework.md).
 The latest verified refresh, cloud restore and development mirror results are in
 [`_working/corpus_refresh_handoff.md`](_working/corpus_refresh_handoff.md).
-The next-task recommendation, operational prerequisites and offline alternatives
-are in [`_working/next_initiative_handoff.md`](_working/next_initiative_handoff.md).
+The November 4–5 extraction, delivery and Postgres import cycle and its next steps
+are in [`_working/research_cycle_2026-11-05.md`](_working/research_cycle_2026-11-05.md)
+(it supersedes [`_working/next_initiative_handoff.md`](_working/next_initiative_handoff.md)).
 
 ## Start
 
@@ -65,15 +66,34 @@ input byte/token framing allowance and maximum output/reasoning allowance. A
 configured rate/model mismatch can invalidate a dollar estimate; verify the quote
 before a paid batch. Reservations are never refunded within a run.
 
+`facts triage --topic <topic>` reports queued jobs that an LLM pass would duplicate
+or waste; `--apply` moves them to `deferred` (kept, excluded from dispatch) and
+records a `triage` attempt with the evidence. Reasons: `duplicate_capture_text`
+(the same whitespace-normalized text as another capture; keep the capture that
+covers the most chunk texts, breaking ties by completed work and capture ID),
+`structured_dataset` (the source's rows are already imported as a nonempty dataset) and `insufficient_text` (fewer than 20 letters/digits, such
+as an image thumbnail; short headlines and excerpts stay eligible). Duplicate
+coverage compares normalized chunk text and counts a split job only while its whole
+child tree is queued, running or succeeded. `--restore [reason]` returns deferred
+jobs to the queue; `--apply` and `--restore` are mutually exclusive. The November
+2026 triage deferred duplicate chunks from an OGE 278e disclosure and 694 chunks
+of already-imported OMB workbooks.
+
 `--existing-only` consumes the saved queue without generating new extraction jobs.
 Otherwise the command queues chunks of the best available saved capture first.
 Failed jobs are excluded unless `--retry-failed` is supplied. A cost reservation
 and `running` job state commit before submission; interrupted uncertain jobs are
 left `running` for manual evidence recovery, not automatically retried. Inspect
 their `normalize_reservation` attempts and saved outputs before deciding whether
-to retry. Transport, HTTP and response-parsing exceptions also preserve `running`
-and stop new dispatch because an exception alone does not establish that no paid
-request completed. Even `--retry-failed` excludes these uncertain jobs. Completed
+to retry. Ambiguous transport, HTTP and response-parsing failures preserve
+`running` and stop new dispatch. Connection failures that prevent a request from
+being sent are retried, then requeued if the connection stays unavailable.
+A *received* 401, 403 or 429 response is a refusal before
+inference: the job returns to `queued` with `http_<status>` and the saved status,
+body excerpt and rate-limit headers, and dispatch stops. A 429 is retried up to six
+times, honoring `Retry-After` (at most 60 s), without consuming the two 502/503/504
+retries the reservation covers. Fireworks reported a 90,000 generated-token/minute
+limit for this account in November 2026; four workers stayed under it, six did not. Even `--retry-failed` excludes these uncertain jobs. Completed
 responses with an invalid extraction schema remain explicit failed jobs. Storage failures stop dispatch; other already submitted bounded requests
 may finish, but no replacement request is launched. No sync/crawl/batch loop is
 started on failure. Truncated outputs split into smaller tasks; all original input
@@ -259,6 +279,54 @@ versioned, and stale relations are ignored after their observations change.
 ```bash
 .venv/bin/python -m facts.postgres_sync
 # For writes, use the snapshot-linked command below with its S3 delivery receipt.
+# Schema only (no catalog data); safe to run before an import:
+.venv/bin/python -m dotenv -f .env.facts-dev run --override -- \
+  .venv/bin/python -m facts.postgres_sync --migration-status
+.venv/bin/python -m dotenv -f .env.facts-dev run --override -- \
+  .venv/bin/python -m facts.postgres_sync --migrate
+```
+
+### Schema migrations and the `research` read model
+
+`src/facts/postgres_schema.py` holds ordered, checksummed migrations recorded in
+`facts.schema_migrations`. Migration 1 is the original `facts` record mirror (it
+adopts an existing unversioned mirror without rewriting it). Migration 2 adds the
+typed `research` schema. Every import applies pending migrations in its own
+transaction. An applied migration whose text changed, or a database carrying a
+newer migration than the code, stops the import. Add a new numbered migration
+instead of editing an applied one.
+
+`facts.records` stays the lossless contract (all kinds and record versions). The
+`research` schema is a derived, query-ready model of the **active** organized
+catalog, rebuilt from the same SQLite snapshot inside the import transaction:
+
+| Table | Contents |
+| --- | --- |
+| `topics`, `sources`, `topic_sources`, `captures` | Collection catalog; source host and parsed publication date |
+| `observations` | Active observations and source references, typed columns, `categories[]`, event window, full-text `search` |
+| `observation_dates`, `measurements`, `observation_entities`, `attributions`, `observation_sources` | One row per date, measurement (exact `numeric` beside original text/unit/scale/basis), entity mention, attribution and evidence locator |
+| `entities`, `entity_aliases` | Canonical entities with trigram-indexed names/aliases |
+| `groups`, `group_members` | Groupings restricted to current member versions |
+| `datasets`, `series`, `series_values` | Table mappings, series definitions and every active value from the retained Parquet (canonical `value` and original-unit `source_value`) |
+| `refresh_state` | Import receipt and model version the read model reflects |
+
+Views: `observation_evidence` (observation → source/capture provenance),
+`series_points` (values with series/dataset labels) and `extraction_status`
+(backlog read from the mirror). Measurements whose value text cannot be represented
+as a PostgreSQL number keep `value` null and retain `value_text`. Rows remain
+observations, not unique events or additive totals. A retry of a verified linked
+receipt skips the rebuild when the model version matches. A missing referenced
+Parquet file fails the whole import and leaves the previous mirror and read model
+intact. Rebuilding uses `DELETE`, so readers keep the
+previous committed model during an import. The full corpus rebuild takes about two
+minutes and roughly 560 MB.
+
+```sql
+SELECT title, event_start FROM research.observations
+WHERE search @@ websearch_to_tsquery('english', 'World Liberty stablecoin')
+ORDER BY event_start DESC NULLS LAST LIMIT 10;
+SELECT period, value, unit, title FROM research.series_points
+WHERE basis = 'outlays' AND period_start = '2024-10-01' LIMIT 20;
 ```
 
 The command above reports local record counts and the kinds an apply would
