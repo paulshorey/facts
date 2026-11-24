@@ -604,3 +604,21 @@ comparison alongside the affected source item. Organized queries, group
 members and organized observation exports carry the comparison in
 `processing.source_checks`. A check applies to the identified input and can
 describe individual fields within it. The stored original is retained verbatim.
+
+#### House Office Buildings
+
+Account `001–0127–0–1–801` spans printed pages 22–23. The right panel on
+page 22 contains Program and Financing and the first three Object Classification
+rows. The remaining eight object rows start at the top left of page 23, followed
+by the Employment Summary with the same account code.
+
+```bash
+.venv/bin/python -m facts.appendix --house-office-buildings --format markdown
+.venv/bin/python -m facts.appendix --house-office-buildings --collect
+```
+
+The collector checks each side of the page break and both fiscal headers against
+the saved official PDFs. Continued cells cite their own page and the header on
+page 22. For example, `11.1` occupies the row-code column, and the three monetary
+values appear to its right. The private review, source comparisons and full
+schedules are under `exports/us-federal-spending/fy2027-house-office-buildings/`.

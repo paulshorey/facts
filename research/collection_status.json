@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-24T07:17:07.116740+00:00",
+  "generated_at": "2026-11-24T07:39:42.425740+00:00",
   "topics": {
     "trump-second-term": {
       "searches": {
@@ -35,22 +35,22 @@
       "searches": {
         "succeeded": 42
       },
-      "sources": 836,
+      "sources": 837,
       "items": {
         "dataset": 22,
-        "document": 157,
+        "document": 164,
         "event": 221,
         "example": 1,
         "fact": 102645,
         "headline": 827,
         "quote": 22,
         "resource": 41,
-        "statistic": 9606
+        "statistic": 9744
       },
       "captures": {
         "agent_packet": 267,
         "dataset_api": 6,
-        "direct_http": 377,
+        "direct_http": 378,
         "provider_extract": 78,
         "provider_item": 99,
         "search_excerpt": 521,

@@ -147,3 +147,78 @@ def test_adjacent_accounts_never_borrow_cells(pilot, monkeypatch, fault):
             assert (measurement.unit, measurement.value) == ("FTEs", str(n))
         else:
             assert (measurement.unit, measurement.value) == ("USD", str(n * 1_000_000))
+
+
+def house_pdf(page_offset, *, wrong_anchor=False, move_row=False, changed_value=False):
+    """The objects header and its last eight rows occupy different pages and panels."""
+    with pymupdf.open() as doc:
+        for _ in range(23 + page_offset):
+            doc.new_page(width=612, height=792)
+        first, second = doc[-2], doc[-1]
+
+        def put(page, x, y, text):
+            page.insert_text((x, y), text, fontsize=5)
+
+        def header(page, dx, y, title, account):
+            put(page, 60 + dx, y, title)
+            put(page, 36 + dx, y + 14, "Identification code " + account)
+            for x, column in zip((208, 244, 277), appendix.COLUMNS):
+                put(page, dx + x, y + 14, column)
+
+        def row(page, dx, y, code, label, index, indent=60):
+            put(page, dx + 36, y, code)
+            put(page, dx + indent, y, label)
+            for year in (2, 1, 0):
+                value = index + year + int(changed_value and code == "99.9" and year == 2)
+                put(page, dx + 223 + 33 * year, y, str(value))
+
+        put(first, 340, 72, "HOUSE OFFICE BUILDINGS")
+        header(first, 276, 158, appendix.SCHEDULE, appendix.HOUSE_ACCOUNT)
+        put(first, 328, 191, "Funding:")
+        row(first, 276, 201, "0001", "House Office Buildings (Direct)", 22)
+        header(first, 276, 690, appendix.OBJECTS, appendix.HOUSE_ACCOUNT)
+        put(first, 328, 722, "Direct obligations:")
+        put(first, 334, 730, "Personnel compensation:")
+        for i, code in enumerate(("11.1", "11.3", "11.5")):
+            if not (move_row and code == "11.5"):
+                row(first, 276, 738 + 8 * i, code, "Personnel", 40 + i, 65)
+        if move_row:
+            row(second, 0, 61, "11.5", "Personnel", 42, 65)
+        for i, code in enumerate("11.9 12.1 25.1 25.4 26.0 32.0 99.0 99.9".split()):
+            row(second, 0, 68 + i * 9, code, "Object", 52 + i, 70 if i == 0 else 57)
+        # Other account on the facing panel, with the same row code.
+        row(second, 276, 68, "11.9", "Other account", 999)
+        header(second, 0, 155, appendix.EMPLOYMENT, "other-account" if wrong_anchor else appendix.HOUSE_ACCOUNT)
+        row(second, 0, 186, "1001", "Direct civilian full-time equivalent employment", 563)
+        return doc.tobytes()
+
+
+@pytest.mark.parametrize("fault", [None, "wrong_anchor", "move_row", "changed_value"])
+def test_house_schedule_continuation(pilot, monkeypatch, fault):
+    monkeypatch.setattr(appendix, "HOUSE_FINANCING_ROWS", ["0001"])
+    monkeypatch.setattr(appendix, "HOUSE_ACCOUNT", "001-0127-0-1-801")
+    store = Store(pilot)
+    with closing(store.db), store.db:
+        for url, offset in [(appendix.VOLUME, 6), (appendix.CHAPTER, -12)]:
+            changes = {fault: True} if fault and offset == -12 else {}
+            sid = store.source(appendix.TOPIC, url)
+            store.capture(sid, "direct_http", house_pdf(offset, **changes), "", {})
+    if fault:
+        with pytest.raises(ValueError):
+            appendix.run(pilot, collect=True, house=True)
+        with closing(sqlite3.connect(pilot / "storage/catalog.sqlite")) as db:
+            assert db.execute("SELECT count(*) FROM items").fetchone()[0] == 0
+        return
+    result = appendix.run(pilot, collect=True, house=True)
+    assert result == appendix.run(pilot, collect=True, house=True) == appendix.run(pilot, house=True)
+    rows = result["tables"][2]["rows"]
+    assert rows[0]["headings"] == ["Direct obligations:", "Personnel compensation:"]
+    assert rows[1]["headings"] == ["Direct obligations:"]
+    assert [c["value"] for c in rows[0]["cells"]] == [52, 53, 54]
+    with closing(sqlite3.connect(pilot / "storage/catalog.sqlite")) as db:
+        items = [json.loads(raw) for raw, in db.execute("SELECT payload FROM items")]
+    assert len(items) == 39
+    continued = next(i for i in items if i["references"][0]["locator"]["row"] == "11.9")
+    locators = [r["locator"] for r in continued["references"]]
+    assert [l["pdf_page"] for l in locators] == [29, 11]
+    assert all(l["header_printed_page"] == 22 and l["bbox"] != l["header_bbox"] for l in locators)
