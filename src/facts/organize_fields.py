@@ -237,7 +237,7 @@ def adapt_item(item):
             role = "navigation"
         elif "/comment/" in url or ("ycombinator.com/item" in url and origin.get("type") == "agent_packet"):
             role = "comment"
-    elif origin.get("type") in {"dataset_row", "spreadsheet_row"}:
+    elif origin.get("type") in {"dataset_row", "spreadsheet_row", "pdf_schedule_cell"}:
         role = "table_observation"
     if "photo caption" in plain(item.get("detail")).casefold():
         role = "caption"

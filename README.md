@@ -476,3 +476,31 @@ substrings. A subsequent organization pass versions corrected observations while
 retaining original items and cached model responses. No saved corpus is rewritten
 by installing the code. Link discovery counts newly associated topic sources
 against its limit even when the URL is already cataloged for another topic.
+
+### FY2027 Budget Appendix pilot
+
+The pilot collects the Congressional Budget Office Salaries and Expenses program
+and financing schedule on printed page 19. It reads the saved full-volume PDF
+and compares the complete schedule against the GovInfo Legislative Branch PDF.
+The first collection fetches that chapter. Subsequent runs reuse the saved
+captures. A disagreement or incomplete row stops the import before any item is
+committed. The two PDF copies represent the same published schedule.
+
+```bash
+.venv/bin/python -m facts.appendix --collect
+.venv/bin/python -m facts.appendix --format markdown
+```
+
+Each row and fiscal column yields one item with both PDF locators, the printed
+row code, account hierarchy, actual/estimate label and original expression.
+Dollar figures in the source are in millions. A dotted source cell retains its
+expression and has no numeric measurement. Rows include balances, adjustments
+and overlapping totals. The Markdown preview compares budget authority with
+outlays and displays the full schedule. The default JSON includes row headings,
+cell expressions, source IDs, capture IDs and PDF digests. A rerun reuses item
+identities. Both commands accept `--root` for another collector checkout.
+
+For the November 24 collection, the private pack under
+`exports/us-federal-spending/fy2027-cbo-schedule/` includes the verified schedule
+and a source comparison on printed page 20. Check account codes and year headers
+against page geometry when using older model extractions from two-column PDFs.

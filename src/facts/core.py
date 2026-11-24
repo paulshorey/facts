@@ -165,7 +165,7 @@ class Store:
         self.db.execute("INSERT OR IGNORE INTO captures VALUES (?,?,?,?,?,?,?,?,?)", (cid, sid, level, artifact, text_artifact, status, state, now(), dumps(metadata or {})))
         return cid
 
-    def item(self, topic, sid, cid, value, origin, existing_id=None):
+    def item(self, topic, sid, cid, value, origin, existing_id=None, *, additional_references=()):
         item = dict(value)
         iid = existing_id or ident("item", topic, sid, cid, origin, item)
         original_kind=item.get('kind','fact')
@@ -174,6 +174,7 @@ class Store:
         item.update({"id": iid, "schema_version": "item.v1", "topic": topic,
                      "references": [{"source_id": sid, "capture_id": cid, "url": url, "locator": origin}] if sid else [],
                      "collection_metadata": {"extraction_context": origin, "source_item_kind": original_kind}})
+        item["references"].extend(additional_references)
         self.db.execute("INSERT INTO items VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET source=excluded.source,capture=excluded.capture,kind=excluded.kind,payload=excluded.payload", (iid, topic, sid, cid, item.get("kind", "fact"), dumps(item), now()))
         return iid
 
