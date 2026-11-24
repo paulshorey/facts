@@ -40,9 +40,10 @@ When unsure, research before deciding: search the web for current techniques and
 # Improve your instructions
 
 Before you finish, note where you struggled and which instructions, tools, or skills
-were missing or wrong, and fix them: this file and the project docs for this project,
-`~/.agents` for every project. Without access to `~/.agents`, as a cloud agent or
-reviewer, suggest the fixes in your reply instead.
+were missing or wrong. Record project lessons in this file or the project docs.
+Put lessons that apply across projects in `~/.agents` when you have access. Keep edits
+short and specific, and propose larger changes in your reply. If you cannot edit the
+relevant files, suggest those changes in your reply.
 
 # Next steps
 
