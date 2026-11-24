@@ -43,7 +43,11 @@ def export_organized(root=ROOT, topic="all"):
         groups = [json.loads(r[0]) for r in store.db.execute("SELECT payload FROM organized_groups WHERE topic=? ORDER BY id", (selected,))]
         tables = [json.loads(r[0]) for r in store.db.execute("SELECT payload FROM organized_tables WHERE topic=? ORDER BY id", (selected,))]
         entities = [json.loads(r[0]) for r in store.db.execute("SELECT DISTINCT e.payload FROM organized_entities e JOIN organized_links l ON l.target_id=e.id AND l.target_kind='entity' JOIN organized_records r ON r.id=l.record_id AND r.version=l.version AND r.active=1 WHERE r.topic=? ORDER BY e.id", (selected,))]
-        snapshot = ident("snapshot", EXPORT_VERSION, selected, [(r["id"], r["processing"]["version"]) for r in records], groups, inventory, source_index, capture_index, entities, tables)
+        # A comparison may be added after the checked observation was last versioned.
+        versions = [(r["id"], r["processing"]["version"], r["processing"]["source_checks"])
+                    if "source_checks" in r["processing"] else (r["id"], r["processing"]["version"])
+                    for r in records]
+        snapshot = ident("snapshot", EXPORT_VERSION, selected, versions, groups, inventory, source_index, capture_index, entities, tables)
         parent = store.root / "exports" / selected / "organized-v1"
         parent.mkdir(parents=True, exist_ok=True)
         final = parent / snapshot
@@ -105,6 +109,9 @@ def export_organized(root=ROOT, topic="all"):
                 observations = [r for r in records if r["record_type"] == "observation" and r.get("content_role") == "substantive"]
                 for record in observations[:200]:
                     lines += [f"### {record['title']}", "", record.get("detail", ""), "", f"ID: `{record['id']}`; subtype: `{record['subtype']}`; categories: {', '.join(record['categories'])}", ""]
+                    for check in record["processing"].get("source_checks", []):
+                        detail = " ".join((check["detail"] or "").splitlines())
+                        lines += [f"Source comparison `{check['item_id']}` — {detail}", ""]
                     for reference in record.get("references", []):
                         if reference.get("url"):
                             lines += [f"- [Source]({reference['url']})"]

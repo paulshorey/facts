@@ -10,7 +10,7 @@ import unicodedata
 from pathlib import Path
 
 from .contracts import VERSION, Observation, SeriesDefinition
-from .core import ROOT, Store, dumps, ident, now
+from .core import ROOT, Store, dumps, ident, now, source_checks
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS organized_records (
@@ -208,6 +208,19 @@ class OrganizedStore:
               date_from=None, date_to=None):
         if not self.exists():
             return []
+        checks = source_checks(self.db, topic)
+
+        def with_checks(raw):
+            record = json.loads(raw)
+            linked = [check for iid in record.get("input_ids", [])
+                      for check in checks.get((record["topic"], iid), [])]
+            if linked:
+                record["processing"]["source_checks"] = linked
+                warnings = record.setdefault("warnings", [])
+                if "input_has_source_comparison" not in warnings:
+                    warnings.append("input_has_source_comparison")
+            return record
+
         if view == "grouped":
             filtered_ids = None
             if any([contains, entity, category, kind, basis, content_role, date_from, date_to]):
@@ -219,7 +232,7 @@ class OrganizedStore:
                 if group and p["id"] != group:
                     continue
                 members = self.db.execute("SELECT r.payload FROM organized_memberships m JOIN organized_records r ON r.id=m.record_id AND r.active=1 WHERE m.group_id=? ORDER BY r.id", (p["id"],)).fetchall()
-                p["members"] = [json.loads(m[0]) for m in members]
+                p["members"] = [with_checks(m[0]) for m in members]
                 if p.get("member_versions"):
                     p["members"] = [m for m in p["members"] if p["member_versions"].get(m["id"]) == m["processing"]["version"]]
                 if filtered_ids is not None and not filtered_ids.intersection(m["id"] for m in p["members"]):
@@ -259,7 +272,7 @@ class OrganizedStore:
         sql = "SELECT r.payload FROM organized_records r WHERE " + " AND ".join(clauses) + " ORDER BY r.id"
         if limit:
             sql += " LIMIT ?"; params.append(limit)
-        return [json.loads(r[0]) for r in self.db.execute(sql, params)]
+        return [with_checks(r[0]) for r in self.db.execute(sql, params)]
 
     def inventory(self, topic="all"):
         args = () if topic == "all" else (topic,)

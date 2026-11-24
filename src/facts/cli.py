@@ -1,7 +1,7 @@
 import argparse
 import json
 from .runtime import exclusive_writer
-from .core import Store, search, capture_sources, fallback_extract, normalize, export, status, import_packet, repair_truncated
+from .core import Store, search, source_checks, observed_item, capture_sources, fallback_extract, normalize, export, status, import_packet, repair_truncated
 
 
 def main():
@@ -133,7 +133,9 @@ def collector_command(args):
         if args.kind:where.append('kind=?');params.append(args.kind)
         if args.contains:where.append('payload LIKE ?');params.append('%'+args.contains+'%')
         sql='SELECT payload FROM items'+(' WHERE '+' AND '.join(where) if where else '')+' ORDER BY rowid LIMIT ?'
-        for row in store.db.execute(sql,params+[args.limit or 20]):print(row[0])
+        checks = source_checks(store.db, args.topic)
+        for raw, in store.db.execute(sql, params+[args.limit or 20]):
+            print(json.dumps(observed_item(raw, checks), ensure_ascii=False))
     elif args.command == 'sources':
         sql='SELECT DISTINCT s.* FROM sources s JOIN topic_sources t ON t.source=s.id'+(' WHERE t.topic=?' if args.topic!='all' else '')+' ORDER BY s.rowid LIMIT ?'
         for row in store.db.execute(sql,([args.topic] if args.topic!='all' else [])+[args.limit or 20]):print(json.dumps(dict(row)))
