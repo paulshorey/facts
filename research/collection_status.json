@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-17T03:00:50.456071+00:00",
+  "generated_at": "2026-11-06T13:40:25.919881+00:00",
   "topics": {
     "trump-second-term": {
       "searches": {
@@ -7,13 +7,13 @@
       },
       "sources": 763,
       "items": {
-        "document": 13,
-        "event": 130,
-        "fact": 1566,
-        "headline": 785,
-        "quote": 15,
-        "resource": 1,
-        "statistic": 33
+        "document": 73,
+        "event": 751,
+        "fact": 37299,
+        "headline": 841,
+        "quote": 64,
+        "resource": 6,
+        "statistic": 259
       },
       "captures": {
         "agent_packet": 263,
@@ -23,13 +23,13 @@
         "search_excerpt": 507
       },
       "extraction_jobs": {
-        "queued": 1431,
-        "split": 1,
-        "succeeded": 213
+        "deferred": 642,
+        "split": 558,
+        "succeeded": 2116
       },
       "datasets": 0,
       "dataset_rows": 0,
-      "followup_queries": 445
+      "followup_queries": 4574
     },
     "us-federal-spending": {
       "searches": {
@@ -37,14 +37,15 @@
       },
       "sources": 835,
       "items": {
-        "dataset": 10,
-        "document": 33,
-        "event": 23,
-        "fact": 1083,
-        "headline": 793,
-        "quote": 3,
-        "resource": 2,
-        "statistic": 7616
+        "dataset": 22,
+        "document": 150,
+        "event": 221,
+        "example": 1,
+        "fact": 102645,
+        "headline": 827,
+        "quote": 22,
+        "resource": 41,
+        "statistic": 9402
       },
       "captures": {
         "agent_packet": 267,
@@ -56,12 +57,14 @@
         "workbook": 68
       },
       "extraction_jobs": {
-        "queued": 3685,
-        "succeeded": 180
+        "deferred": 773,
+        "failed": 6,
+        "split": 1085,
+        "succeeded": 5255
       },
       "datasets": 88,
       "dataset_rows": 35508,
-      "followup_queries": 486
+      "followup_queries": 14626
     }
   }
 }

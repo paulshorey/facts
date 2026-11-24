@@ -369,28 +369,69 @@ Each item needs a short useful title and 1-3 sentence detail. original_text is a
 """
 
 
-def extraction_body(chunk, topic, max_tokens=6500):
+# Dense filings and budget tables routinely need more than 6,500 output tokens per
+# 14k-character chunk; truncation wastes the whole call before splitting.
+EXTRACTION_MAX_TOKENS = 12000
+
+
+def extraction_body(chunk, topic, max_tokens=EXTRACTION_MAX_TOKENS):
     schema = Extraction.model_json_schema()
     return {"model": MODEL, "messages": [{"role": "system", "content": EXTRACTION_PROMPT}, {"role": "user", "content": dumps({"topic": topic, "source_text": chunk})}], "temperature": 0, "max_tokens": max_tokens,
             "response_format": {"type": "json_schema", "json_schema": {"name": "Extraction", "schema": schema}}, "reasoning_effort": 256}
 
 
-def llm_extract(chunk, topic, max_tokens=6500, *, body=None):
+def retry_after(value, default):
+    """Seconds to wait from a Retry-After header in delay-seconds or HTTP-date form."""
+    if not value:
+        return default
+    try:
+        seconds = float(value)
+        # NaN/inf parse as floats but are not delays; fall back to the default.
+        return seconds if seconds == seconds and seconds not in (float("inf"), float("-inf")) else default
+    except ValueError:
+        pass
+    from email.utils import parsedate_to_datetime
+    try:
+        when = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return default
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return max(0.0, (when - datetime.now(timezone.utc)).total_seconds())
+
+
+def llm_extract(chunk, topic, max_tokens=EXTRACTION_MAX_TOKENS, *, body=None):
     body = body or extraction_body(chunk, topic, max_tokens)
-    with httpx.Client(timeout=150) as client:
+    # Full-length responses can exceed several minutes under provider load; a read timeout
+    # leaves an uncertain (possibly billed) job, so allow the response time to finish.
+    with httpx.Client(timeout=httpx.Timeout(600, connect=30)) as client:
         request_history=[]
-        for attempt in range(3):
-            response = client.post("https://api.fireworks.ai/inference/v1/chat/completions", headers={"Authorization": "Bearer " + os.environ["FIREWORKS_API_KEY"]}, json=body)
-            request_history.append({'status':response.status_code,'at':now()})
-            if response.status_code in (429,502,503,504) and attempt<2:
-                try:delay=float(response.headers.get('retry-after',3*(2**attempt)))
-                except ValueError:delay=3*(2**attempt)
-                time.sleep(min(max(delay,1),30))
+        # A 429 is refused before inference, so it gets patient retries without
+        # consuming the three-request allowance that the cost reservation covers.
+        rate_retries = server_retries = connect_retries = 0
+        while True:
+            try:
+                response = client.post("https://api.fireworks.ai/inference/v1/chat/completions", headers={"Authorization": "Bearer " + os.environ["FIREWORKS_API_KEY"]}, json=body)
+            except (httpx.ConnectError, httpx.ConnectTimeout):
+                # No connection means no request was sent; retrying cannot double-bill.
+                if connect_retries >= 4:
+                    raise
+                time.sleep(5 * 2 ** connect_retries)
+                connect_retries += 1
                 continue
-            response.raise_for_status()
-            data = response.json()
-            data['_collection_request_history']=request_history
-            break
+            request_history.append({'status':response.status_code,'at':now()})
+            status = response.status_code
+            retry = (status == 429 and rate_retries < 6) or (status in (502,503,504) and server_retries < 2)
+            if not retry:
+                break
+            count = rate_retries if status == 429 else server_retries
+            delay = retry_after(response.headers.get('retry-after'), 3*(2**count))
+            time.sleep(min(max(delay,1),60))
+            if status == 429: rate_retries += 1
+            else: server_retries += 1
+        response.raise_for_status()
+        data = response.json()
+        data['_collection_request_history']=request_history
     choice = data["choices"][0]
     if choice.get("finish_reason") == "length":
         return data, None, "output_truncated"

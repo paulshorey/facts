@@ -1,5 +1,8 @@
 # Next initiative handoff
 
+> **Superseded.** Choice A was completed on November 4–5, 2026; see
+> [research_cycle_2026-11-05.md](research_cycle_2026-11-05.md).
+
 Prepared October 29, 2026 for the next facts.news task.
 
 ## Recommended next outcome
