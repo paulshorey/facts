@@ -182,6 +182,33 @@ class Store:
         self.db.execute("INSERT INTO attempts VALUES (?,?,?,?,?,?,?)", (ident("attempt", now(), stage, target), stage, target, now(), outcome, artifact, dumps(metadata or {})))
 
 
+def source_checks(db, topic):
+    """Index separately retained comparison documents by the original input they review."""
+    sql = """SELECT topic, payload FROM items WHERE kind='document'
+             AND json_extract(payload, '$.collection_metadata.extraction_context.type')='source_comparison'"""
+    params = ()
+    if topic != "all":
+        sql += " AND topic=?"
+        params = (topic,)
+    checks = {}
+    for slug, raw in db.execute(sql + " ORDER BY id", params):
+        note = json.loads(raw)
+        target = note["collection_metadata"]["extraction_context"].get("compared_item_id")
+        if isinstance(target, str) and target and note.get("references"):
+            summary = {"compared_item_id": target, "item_id": note["id"], "detail": note.get("detail", ""),
+                       "references": note["references"]}
+            checks.setdefault((slug, target), []).append(summary)
+    return checks
+
+
+def observed_item(raw, checks):
+    value = json.loads(raw)
+    linked = checks.get((value["topic"], value["id"]))
+    if linked:
+        value["source_checks"] = linked
+    return value
+
+
 def parallel_search(payload):
     key = os.environ["PARALLEL_API_KEY"]
     request = {"objective": payload["objective"], "search_queries": payload["search_queries"]}
@@ -574,7 +601,8 @@ def export(store, topic="all"):
     for t in topics:
         directory = store.root / "exports" / t
         directory.mkdir(parents=True, exist_ok=True)
-        items = [json.loads(r[0]) for r in store.db.execute("SELECT payload FROM items WHERE topic=? ORDER BY rowid", (t,))]
+        checks = source_checks(store.db, t)
+        items = [observed_item(r[0], checks) for r in store.db.execute("SELECT payload FROM items WHERE topic=? ORDER BY rowid", (t,))]
         sources = [dict(r) for r in store.db.execute("SELECT DISTINCT s.* FROM sources s JOIN topic_sources ts ON ts.source=s.id WHERE ts.topic=?", (t,))]
         for name, rows in (("items", items), ("sources", sources)):
             (directory / (name+".jsonl")).write_text("".join(dumps(r)+"\n" for r in rows))
@@ -593,6 +621,8 @@ def export(store, topic="all"):
                 lines.append(f"- **{title}**" + (f" ([source]({url}))" if url else "") + "\n")
                 if item.get("detail"):
                     lines.append("  " + item["detail"].replace("\n", " ") + "\n")
+                for check in item.get("source_checks", []):
+                    lines.append(f"  Source comparison `{check['item_id']}` — {check['detail']}\n")
         (directory / "inventory.md").write_text("\n".join(lines))
         print(directory)
     report_path = store.root / "research" / "collection_status.json"

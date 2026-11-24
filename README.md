@@ -578,3 +578,29 @@ page geometry in older model extractions from two-column PDFs. The 31-row OGE
 feasibility sample is in `exports/trump-second-term/oge-part7-page159/`.
 The November 24 local snapshot includes both export packs. The published
 development mirror reflects the November 6 delivery.
+
+#### Neighboring accounts and source comparisons
+
+Printed pages 20–21 contain eight Object Classification and Employment Summary
+schedules for four accounts. Each panel has its own identification code and
+three fiscal columns. To inspect or collect this edition:
+
+```bash
+.venv/bin/python -m facts.appendix --neighboring-accounts --format markdown
+.venv/bin/python -m facts.appendix --neighboring-accounts --collect
+```
+
+Collection matches both official PDF copies, row inventories and header
+positions before saving cells. Each locator includes the account, schedule,
+printed page, PDF page, panel bounds, row and fiscal column. Object-class
+figures use millions of dollars. Employment uses FTEs. Original dot leaders
+remain available alongside the numeric cells.
+
+The private pack in `exports/us-federal-spending/fy2027-neighboring-accounts/`
+includes the tables, reviewed discrepancies and supporting cell IDs. A
+`source_comparison` document links to the original item through its
+`compared_item_id` locator. Item queries and JSONL exports show the cited
+comparison alongside the affected source item. Organized queries, group
+members and organized observation exports carry the comparison in
+`processing.source_checks`. A check applies to the identified input and can
+describe individual fields within it. The stored original is retained verbatim.
