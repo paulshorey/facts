@@ -4,8 +4,10 @@ A local-first collector for itemized research. The current campaigns cover Trump
 family/associate financial activity during the second term and US federal
 spending categories, expense rows, and attributed estimates. The original design
 is in [`_working/initial_research_framework.md`](_working/initial_research_framework.md).
-The latest verified refresh, cloud restore and development mirror results are in
+The November 6 refresh, cloud restore and development mirror results are in
 [`_working/corpus_refresh_handoff.md`](_working/corpus_refresh_handoff.md).
+The [November 24 Budget Appendix pilot](#fy2027-budget-appendix-pilot) describes
+the follow-up collection and its private exports.
 The November 4–5 extraction, delivery and Postgres import cycle and its next steps
 are in [`_working/research_cycle_2026-11-05.md`](_working/research_cycle_2026-11-05.md)
 (it supersedes [`_working/next_initiative_handoff.md`](_working/next_initiative_handoff.md)).
@@ -544,3 +546,35 @@ substrings. A subsequent organization pass versions corrected observations while
 retaining original items and cached model responses. No saved corpus is rewritten
 by installing the code. Link discovery counts newly associated topic sources
 against its limit even when the URL is already cataloged for another topic.
+
+### FY2027 Budget Appendix pilot
+
+The pilot collects the Congressional Budget Office Salaries and Expenses program
+and financing schedule on printed page 19. It reads the saved full-volume PDF
+and compares the complete schedule against the GovInfo Legislative Branch PDF.
+The first collection fetches that chapter. Subsequent runs reuse the saved
+captures. A disagreement or incomplete row stops the import before any item is
+committed. The two PDF copies represent the same published schedule.
+
+```bash
+.venv/bin/python -m facts.appendix --collect
+.venv/bin/python -m facts.appendix --format markdown
+```
+
+Each row and fiscal column yields one item with both PDF locators, the printed
+row code, account hierarchy, actual/estimate label and original expression.
+Dollar figures in the source are in millions. A dotted source cell retains its
+expression and has no numeric measurement. Rows include balances, adjustments
+and overlapping totals. The Markdown preview compares budget authority with
+outlays and displays the full schedule. The default JSON includes row headings,
+cell expressions, source IDs, capture IDs and PDF digests. A rerun reuses item
+identities. Both commands accept `--root` for another collector checkout.
+
+For the November 24 collection, the private pack under
+`exports/us-federal-spending/fy2027-cbo-schedule/` includes the verified schedule,
+a source comparison on printed page 20, and a six-chunk review in
+`quality-review.md`. The review checks account codes and year headers against
+page geometry in older model extractions from two-column PDFs. The 31-row OGE
+feasibility sample is in `exports/trump-second-term/oge-part7-page159/`.
+The November 24 local snapshot includes both export packs. The published
+development mirror reflects the November 6 delivery.
