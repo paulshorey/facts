@@ -622,7 +622,8 @@ def export(store, topic="all"):
                 if item.get("detail"):
                     lines.append("  " + item["detail"].replace("\n", " ") + "\n")
                 for check in item.get("source_checks", []):
-                    lines.append(f"  Source comparison `{check['item_id']}` — {check['detail']}\n")
+                    detail = " ".join((check["detail"] or "").splitlines())
+                    lines.append(f"  Source comparison `{check['item_id']}` — {detail}\n")
         (directory / "inventory.md").write_text("\n".join(lines))
         print(directory)
     report_path = store.root / "research" / "collection_status.json"

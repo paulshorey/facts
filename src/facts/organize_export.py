@@ -110,7 +110,8 @@ def export_organized(root=ROOT, topic="all"):
                 for record in observations[:200]:
                     lines += [f"### {record['title']}", "", record.get("detail", ""), "", f"ID: `{record['id']}`; subtype: `{record['subtype']}`; categories: {', '.join(record['categories'])}", ""]
                     for check in record["processing"].get("source_checks", []):
-                        lines += [f"Source comparison `{check['item_id']}` — {check['detail']}", ""]
+                        detail = " ".join((check["detail"] or "").splitlines())
+                        lines += [f"Source comparison `{check['item_id']}` — {detail}", ""]
                     for reference in record.get("references", []):
                         if reference.get("url"):
                             lines += [f"- [Source]({reference['url']})"]

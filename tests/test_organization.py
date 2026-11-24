@@ -594,14 +594,16 @@ def test_source_comparison_follows_item_into_views_and_export(tmp_path):
     organize(tmp_path, "topic", use_llm=False)
     first = export_organized(tmp_path, "topic")[0]
     ref = old["references"][0]
+    detail = "The neighboring account reports the cited figures.\r\n- See the cited employment table."
     note_id = raw.item("topic", ref["source_id"], ref["capture_id"],
-                       {"kind": "document", "title": "Account check", "detail": "The neighboring account reports the cited figures."},
+                       {"kind": "document", "title": "Account check", "detail": detail},
                        {"type": "source_comparison", "compared_item_id": old["id"]})
     raw.db.commit()
     organized = OrganizedStore(tmp_path, readonly=True)
     result, = organized.query("topic", contains="Legacy employment")
     check, = result["processing"]["source_checks"]
     assert check["item_id"] == note_id and check["compared_item_id"] == old["id"]
+    assert check["detail"] == detail
     assert "input_has_source_comparison" in result["warnings"]
     grouped = organized.query("topic", view="grouped", contains="Legacy employment")
     assert any(check in m["processing"].get("source_checks", []) for g in grouped for m in g["members"])
@@ -609,12 +611,14 @@ def test_source_comparison_follows_item_into_views_and_export(tmp_path):
     assert first["snapshot"] != second["snapshot"]
     lines = (tmp_path / second["path"] / "observations.jsonl").read_text().splitlines()
     assert any(check in json.loads(line)["processing"].get("source_checks", []) for line in lines)
+    comparison_line = f"Source comparison `{note_id}` — The neighboring account reports the cited figures. - See the cited employment table."
+    assert comparison_line in (tmp_path / second["path"] / "inventory.md").read_text().splitlines()
     assert json.loads(raw.db.execute("SELECT payload FROM items WHERE id=?", (old["id"],)).fetchone()[0]) == old
     from facts.core import export
     export(raw, "topic")
     items = [json.loads(line) for line in (tmp_path / "exports/topic/items.jsonl").read_text().splitlines()]
     target, = (i for i in items if i["id"] == old["id"])
     assert target["source_checks"] == [check]
-    assert note_id in (tmp_path / "exports/topic/inventory.md").read_text()
+    assert f"  {comparison_line}" in (tmp_path / "exports/topic/inventory.md").read_text().splitlines()
     organized.db.close()
     raw.db.close()
