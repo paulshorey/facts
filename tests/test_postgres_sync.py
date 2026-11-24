@@ -501,7 +501,10 @@ def test_read_model_number_bounds_and_current_group_anchor(tmp_path, postgres):
     for iid in ("a", "b"):
         store.save_record(Observation(id=iid, topic="topic", title="Contract awarded", input_ids=[iid],
             entities=[{"name": "Acme", "entity_type": "organization"}],
-            measurements=[{"metric": "m", "value": "1e1000000", "original_expression": "huge"}]), "v1", "item:"+iid)
+            measurements=[
+                {"metric": "m", "value": "1e1000000", "original_expression": "huge"},
+                {"metric": "m", "value": "1.0e-16383", "original_expression": "tiny"},
+            ]), "v1", "item:"+iid)
     store.db.commit(); group_observations(store)
     gid, payload = store.db.execute("SELECT id,payload FROM organized_groups WHERE group_kind='occurrence' LIMIT 1").fetchone()
     anchor = __import__("json").loads(payload)["anchor_id"]
@@ -511,5 +514,7 @@ def test_read_model_number_bounds_and_current_group_anchor(tmp_path, postgres):
     store.db.commit()
     postgres_sync.sync_records(store, postgres)
     assert postgres.execute("SELECT count(*) FROM research.measurements WHERE value IS NULL AND value_text='1e1000000'").fetchone()[0] >= 1
+    row = postgres.execute("SELECT value = '1e-16383'::numeric FROM research.measurements WHERE value_text='1.0e-16383'").fetchone()
+    assert row == (True,)
     row = postgres.execute("SELECT anchor_id, observation_count FROM research.groups WHERE id=%s", (gid,)).fetchone()
     assert row == (other, 1)

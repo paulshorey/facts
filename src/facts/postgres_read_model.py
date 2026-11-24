@@ -64,14 +64,16 @@ def _number(value):
     # Check both the integer digits (adjusted exponent) and the effective scale
     # (fractional digits after dropping insignificant trailing zeros).
     # Computed from the digit tuple: Decimal.normalize() can overflow the default context.
-    _, digits, exponent = number.as_tuple()
+    sign, digits, exponent = number.as_tuple()
     text = "".join(map(str, digits))
     trailing = len(text) - len(text.rstrip("0"))
-    exponent += trailing
-    scale = max(0, -exponent)
+    effective_exponent = exponent + trailing
     # Unconstrained numeric has no 1,000-digit precision cap (that applies to numeric(p,s)).
-    if number.adjusted() >= 131072 or scale > 16383:
+    if number.adjusted() >= 131072 or effective_exponent < -16383:
         return None
+    # COPY rejects an out-of-range display scale even when only trailing zeros exceed it.
+    if exponent < -16383:
+        return Decimal((sign, digits[:-trailing], effective_exponent))
     return number
 
 
