@@ -69,15 +69,15 @@ before a paid batch. Reservations are never refunded within a run.
 `facts triage --topic <topic>` reports queued jobs that an LLM pass would duplicate
 or waste; `--apply` moves them to `deferred` (kept, excluded from dispatch) and
 records a `triage` attempt with the evidence. Reasons: `duplicate_capture_text`
-(the same whitespace-normalized text as another capture; the capture with the most
-completed work is kept), `structured_dataset` (the source's rows are already
-imported as a dataset) and `insufficient_text` (fewer than 20 letters/digits, such
+(the same whitespace-normalized text as another capture; keep the capture that
+covers the most chunk texts, breaking ties by completed work and capture ID),
+`structured_dataset` (the source's rows are already imported as a nonempty dataset) and `insufficient_text` (fewer than 20 letters/digits, such
 as an image thumbnail; short headlines and excerpts stay eligible). Duplicate
 coverage compares normalized chunk text and counts a split job only while its whole
 child tree is queued, running or succeeded. `--restore [reason]` returns deferred
 jobs to the queue; `--apply` and `--restore` are mutually exclusive. The November
-2026 triage deferred three copies of one OGE 278e disclosure (650 chunks) and 694
-chunks of already-imported OMB workbooks.
+2026 triage deferred duplicate chunks from an OGE 278e disclosure and 694 chunks
+of already-imported OMB workbooks.
 
 `--existing-only` consumes the saved queue without generating new extraction jobs.
 Otherwise the command queues chunks of the best available saved capture first.
@@ -85,9 +85,10 @@ Failed jobs are excluded unless `--retry-failed` is supplied. A cost reservation
 and `running` job state commit before submission; interrupted uncertain jobs are
 left `running` for manual evidence recovery, not automatically retried. Inspect
 their `normalize_reservation` attempts and saved outputs before deciding whether
-to retry. Transport, other HTTP and response-parsing exceptions also preserve `running`
-and stop new dispatch because an exception alone does not establish that no paid
-request completed. A *received* 401, 403 or 429 response is a refusal before
+to retry. Ambiguous transport, HTTP and response-parsing failures preserve
+`running` and stop new dispatch. Connection failures that prevent a request from
+being sent are retried, then requeued if the connection stays unavailable.
+A *received* 401, 403 or 429 response is a refusal before
 inference: the job returns to `queued` with `http_<status>` and the saved status,
 body excerpt and rate-limit headers, and dispatch stops. A 429 is retried up to six
 times, honoring `Retry-After` (at most 60 s), without consuming the two 502/503/504
@@ -311,11 +312,12 @@ catalog, rebuilt from the same SQLite snapshot inside the import transaction:
 
 Views: `observation_evidence` (observation → source/capture provenance),
 `series_points` (values with series/dataset labels) and `extraction_status`
-(backlog read from the mirror). Measurements whose value text is not a plain
-number keep `value` null and retain `value_text`. Rows remain observations, not
-unique events or additive totals. A retry of the same receipt skips the rebuild;
-a missing referenced Parquet file fails the whole import and leaves the previous
-mirror and read model intact. Rebuilding uses `DELETE`, so readers keep the
+(backlog read from the mirror). Measurements whose value text cannot be represented
+as a PostgreSQL number keep `value` null and retain `value_text`. Rows remain
+observations, not unique events or additive totals. A retry of a verified linked
+receipt skips the rebuild when the model version matches. A missing referenced
+Parquet file fails the whole import and leaves the previous mirror and read model
+intact. Rebuilding uses `DELETE`, so readers keep the
 previous committed model during an import. The full corpus rebuild takes about two
 minutes and roughly 560 MB.
 
