@@ -222,3 +222,22 @@ def test_house_schedule_continuation(pilot, monkeypatch, fault):
     locators = [r["locator"] for r in continued["references"]]
     assert [l["pdf_page"] for l in locators] == [29, 11]
     assert all(l["header_printed_page"] == 22 and l["bbox"] != l["header_bbox"] for l in locators)
+
+
+def test_repeated_financing_header_preserves_section_and_checks_account():
+    box = pymupdf.Rect(34, 73, 302, 148)
+    with pymupdf.open() as doc:
+        page = doc.new_page()
+        for x, y, text in [(60, 80, "Program and Financing-Continued"),
+                           (36, 100, "Identification code Senate"), (58, 115, "Budget authority:"),
+                           (36, 133, "1100"), (70, 133, "Appropriation")]:
+            page.insert_text((x, y), text, fontsize=5)
+        for i, column in enumerate(appendix.COLUMNS):
+            page.insert_text((208 + 33*i, 100), column, fontsize=5)
+            page.insert_text((223 + 33*i, 133), str(i+1), fontsize=5)
+        def read(account):
+            return appendix.parse_table(page, box, 0, "Program and Financing-Continued", account, ["1100"],
+                                        inherited=[(51.8, "Budgetary resources:")], close_sections=True)
+        assert read("Senate")[0]["headings"] == ["Budgetary resources:", "Budget authority:"]
+        with pytest.raises(ValueError, match="account"):
+            read("House")

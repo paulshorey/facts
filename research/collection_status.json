@@ -1,6 +1,38 @@
 {
-  "generated_at": "2026-11-24T07:39:42.425740+00:00",
+  "generated_at": "2026-11-25T03:44:32.666034+00:00",
   "topics": {
+    "electric-reliability": {
+      "searches": {
+        "queued": 1
+      },
+      "sources": 1,
+      "items": {
+        "statistic": 2
+      },
+      "captures": {
+        "direct_http": 1
+      },
+      "extraction_jobs": {},
+      "datasets": 0,
+      "dataset_rows": 0,
+      "followup_queries": 0
+    },
+    "household-water": {
+      "searches": {
+        "queued": 1
+      },
+      "sources": 1,
+      "items": {
+        "statistic": 2
+      },
+      "captures": {
+        "direct_http": 1
+      },
+      "extraction_jobs": {},
+      "datasets": 0,
+      "dataset_rows": 0,
+      "followup_queries": 0
+    },
     "trump-second-term": {
       "searches": {
         "succeeded": 42
@@ -31,6 +63,22 @@
       "dataset_rows": 0,
       "followup_queries": 4574
     },
+    "unpaid-care": {
+      "searches": {
+        "queued": 1
+      },
+      "sources": 1,
+      "items": {
+        "statistic": 3
+      },
+      "captures": {
+        "direct_http": 1
+      },
+      "extraction_jobs": {},
+      "datasets": 0,
+      "dataset_rows": 0,
+      "followup_queries": 0
+    },
     "us-federal-spending": {
       "searches": {
         "succeeded": 42
@@ -38,19 +86,20 @@
       "sources": 837,
       "items": {
         "dataset": 22,
-        "document": 164,
+        "document": 166,
         "event": 221,
         "example": 1,
         "fact": 102645,
         "headline": 827,
         "quote": 22,
         "resource": 41,
-        "statistic": 9744
+        "statistic": 10241
       },
       "captures": {
         "agent_packet": 267,
         "dataset_api": 6,
         "direct_http": 378,
+        "indexed_official_page": 1,
         "provider_extract": 78,
         "provider_item": 99,
         "search_excerpt": 521,

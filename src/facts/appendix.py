@@ -66,7 +66,7 @@ def panel_lines(page, box, offset):
     return [sorted(parts) for _, parts in sorted(lines.items())]
 
 
-def parse_table(page, box, offset, schedule, account, codes, *, continuation=None, close_sections=False):
+def parse_table(page, box, offset, schedule, account, codes, *, continuation=None, close_sections=False, inherited=()):
     ordered = panel_lines(page, box, offset)
     headers = [[t for _, t in line] for line in ordered[:2]]
     if headers != [[schedule], [f"Identification code {account}", *COLUMNS]]:
@@ -76,7 +76,7 @@ def parse_table(page, box, offset, schedule, account, codes, *, continuation=Non
         raise ValueError("Fiscal column heading outside its expected position")
 
     rows = []
-    headings = []
+    headings = list(inherited)
     body = ordered[2:]
     if continuation is not None:
         # Only the first page carries the header. Check each side of the page
@@ -191,6 +191,39 @@ def house_tables(pdf, page_offset):
         return tables
 
 
+def senate_tables(pdf, page_offset):
+    code = "001–0123–0–1–801"
+    continued = "Program and Financing—Continued"
+    layouts = (
+        (21, 276, (631, 753), SCHEDULE, "0001 1000 1011 1021 1070"),
+        (22, 0, (73, 441), continued,
+         "1100 1900 1930 1941 3000 3010 3011 3020 3040 3041 3050 3100 3200 "
+         "4000 4010 4011 4020 4033 4040 4052 4070 4080 4180 4190"),
+        (22, 0, (472, 649), OBJECTS, "11.1 11.3 11.5 11.9 12.1 23.1 23.2 25.1 25.3 25.4 26.0 31.0 32.0 99.9"),
+        (22, 0, (653, 700), EMPLOYMENT, "1001"),
+    )
+    tables = []
+    with pymupdf.open(stream=pdf, filetype="pdf") as document:
+        for page, offset, (top, bottom), title, codes in layouts:
+            source = document[page + page_offset - 1]
+            box = pymupdf.Rect(34 + offset, top, 302 + offset, bottom)
+            inherited = ()
+            if title == continued:
+                # The account/fiscal header repeats; the Budgetary resources section does not.
+                if tables[-1]["rows"][-1]["headings"] != ["Budgetary resources:"]:
+                    raise ValueError("Unexpected section at Senate financing page break")
+                inherited = ((51.8, "Budgetary resources:"),)
+            rows = parse_table(source, box, offset, title, code, codes.split(),
+                               close_sections=True, inherited=inherited)
+            if title == EMPLOYMENT and rows[0]["label"] != "Direct civilian full-time equivalent employment":
+                raise ValueError("Unexpected employment metric")
+            tables.append({"agency": ARCHITECT, "account": "Senate Office Buildings", "account_code": code,
+                           "schedule": SCHEDULE if title == continued else title, "printed_page": page,
+                           "columns": COLUMNS, "bbox": list(box), "rows": rows,
+                           "unit": "FTEs" if title == EMPLOYMENT else "millions of dollars"})
+    return tables
+
+
 def saved_pdf(db, root, url):
     row = db.execute("""SELECT s.id,c.id,c.artifact FROM captures c JOIN sources s ON s.id=c.source
         WHERE s.url=? AND c.level='direct_http' AND c.state='succeeded'
@@ -243,11 +276,12 @@ def store_cells(store, rows, volume, chapter, *, table=None):
             store.item(TOPIC, volume[0], volume[1], value, locator, additional_references=[chapter_ref])
 
 
-def run(root, collect=False, *, neighboring=False, house=False):
+def run(root, collect=False, *, neighboring=False, house=False, senate=False):
     root = Path(root).resolve()
-    if house and neighboring:
+    if sum((house, neighboring, senate)) > 1:
         raise ValueError("Select one schedule collection")
-    reader = house_tables if house else account_tables if neighboring else None
+    reader = next((fn for chosen, fn in ((house, house_tables), (senate, senate_tables),
+                                          (neighboring, account_tables)) if chosen), None)
     with writer_lock(root) if collect else nullcontext():
         return _process(root, collect, reader)
 
@@ -357,10 +391,12 @@ def main():
     parser.add_argument("--collect", action="store_true", help="Save the chapter and verified cells in one transaction")
     parser.add_argument("--format", choices=("json", "markdown"), default="json")
     group = parser.add_mutually_exclusive_group()
+    group.add_argument("--senate-office-buildings", action="store_true", help="Read the Senate account on printed pages 21–22")
     group.add_argument("--house-office-buildings", action="store_true", help="Read the House account on printed pages 22–23")
     group.add_argument("--neighboring-accounts", action="store_true", help="Read the four account panels on printed pages 20–21")
     args = parser.parse_args()
-    result = run(args.root, collect=args.collect, neighboring=args.neighboring_accounts, house=args.house_office_buildings)
+    result = run(args.root, collect=args.collect, neighboring=args.neighboring_accounts, house=args.house_office_buildings,
+                 senate=args.senate_office_buildings)
     render = account_report if "tables" in result else report
     print(render(result) if args.format == "markdown" else dumps(result))
 
