@@ -51,14 +51,14 @@ def plan(store, topic):
             digest, size = _normalized_digest(store, row["text_artifact"])
             captures[row["capture"]] = {"source": row["source"], "digest": digest, "size": size}
     # Among identical texts keep the capture with the most completed work, then the first id.
-    done = dict(db.execute("SELECT capture, count(*) FROM extraction_jobs WHERE topic=? AND state IN ('succeeded','split') GROUP BY 1", (topic,)).fetchall())
+    done = dict(db.execute("SELECT capture, count(*) FROM extraction_jobs WHERE topic=? AND state IN ('succeeded','recovered','split') GROUP BY 1", (topic,)).fetchall())
     by_digest = defaultdict(list)
     for capture, info in captures.items():
         if info["digest"]:
             by_digest[info["digest"]].append(capture)
     # Duplicate groups also consider identical captures that have no queued work left.
     for row in db.execute("""SELECT DISTINCT c.id, c.text_artifact FROM captures c JOIN extraction_jobs j ON j.capture=c.id
-            WHERE j.topic=? AND j.state IN ('succeeded','split')""", (topic,)):
+            WHERE j.topic=? AND j.state IN ('succeeded','recovered','split')""", (topic,)):
         if row["id"] not in captures:
             digest, _ = _normalized_digest(store, row["text_artifact"])
             if digest in by_digest:
@@ -73,7 +73,7 @@ def plan(store, topic):
         digest, _ = _normalized_digest(store, row["text_artifact"])
         chunk_digest[(row["capture"], row["chunk"])].add(digest)
     # A job covers its text only if it, or (when split) its whole child tree, can still
-    # yield items: queued/running/succeeded. Failed or deferred descendants break coverage.
+    # yield items: queued/running/succeeded/recovered. Failed or deferred descendants break coverage.
     states = {r["id"]: (r["state"], r["capture"], r["chunk"]) for r in
               db.execute("SELECT id, state, capture, chunk FROM extraction_jobs WHERE topic=?", (topic,))}
     children = defaultdict(list)
@@ -85,7 +85,7 @@ def plan(store, topic):
     def is_live(job, depth=0):
         if job not in live:
             state = states.get(job, ("missing",))[0]
-            if state in ("queued", "running", "succeeded"):
+            if state in ("queued", "running", "succeeded", "recovered"):
                 live[job] = True
             elif state == "split" and depth < 50:
                 live[job] = bool(children[job]) and all(is_live(c, depth + 1) for c in children[job])

@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-25T03:44:32.666034+00:00",
+  "generated_at": "2026-11-26T04:21:00.365855+00:00",
   "topics": {
     "electric-reliability": {
       "searches": {
@@ -86,7 +86,7 @@
       "sources": 837,
       "items": {
         "dataset": 22,
-        "document": 166,
+        "document": 168,
         "event": 221,
         "example": 1,
         "fact": 102645,
@@ -107,7 +107,7 @@
       },
       "extraction_jobs": {
         "deferred": 773,
-        "failed": 6,
+        "recovered": 6,
         "split": 1085,
         "succeeded": 5255
       },

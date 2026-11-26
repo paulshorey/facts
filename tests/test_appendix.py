@@ -241,3 +241,59 @@ def test_repeated_financing_header_preserves_section_and_checks_account():
         assert read("Senate")[0]["headings"] == ["Budgetary resources:", "Budget authority:"]
         with pytest.raises(ValueError, match="account"):
             read("House")
+
+
+def senate_pdf(page_offset):
+    account = "001–0123–0–1–801"
+    with pymupdf.open() as doc:
+        for _ in range(22 + page_offset):
+            doc.new_page(width=612, height=792)
+        opening, following = doc[-2], doc[-1]
+        for page in (opening, following):
+            page.insert_font(fontname="Fixture", fontbuffer=pymupdf.Font("helv").buffer)
+
+        def panel(page, dx, y, title, codes, headings, label="Example"):
+            def put(x, baseline, text):
+                page.insert_text((dx + x, baseline), text, fontsize=5, fontname="Fixture")
+            put(80, y, title)
+            put(36, y + 10, "Identification code " + account)
+            for x, column in zip((208, 244, 277), appendix.COLUMNS):
+                put(x, y + 10, column)
+            y += 10
+            for x, heading in headings:
+                y += 10
+                put(x, y, heading)
+            for code in codes.split():
+                y += 10
+                put(36, y, code)
+                put(70, y, label)
+                for x, value in zip((222, 255, 288), ("1", "2", "3")):
+                    put(x, y, value)
+
+        panel(opening, 276, 640, appendix.SCHEDULE, "0001 1000 1011 1021 1070", [(51.8, "Budgetary resources:")])
+        panel(following, 0, 81, "Program and Financing—Continued",
+              "1100 1900 1930 1941 3000 3010 3011 3020 3040 3041 3050 3100 3200 "
+              "4000 4010 4011 4020 4033 4040 4052 4070 4080 4180 4190",
+              [(57.8, "Budget authority:"), (63.8, "Appropriations, discretionary:")])
+        panel(following, 0, 480, appendix.OBJECTS, "11.1 11.3 11.5 11.9 12.1 23.1 23.2 25.1 25.3 25.4 26.0 31.0 32.0 99.9",
+              [(51.8, "Direct obligations:")])
+        panel(following, 0, 664, appendix.EMPLOYMENT, "1001", [], "Direct civilian full-time equivalent employment")
+        return doc.tobytes()
+
+
+def test_senate_collector_links_continued_appropriation_to_both_pages(tmp_path):
+    store = Store(tmp_path)
+    with closing(store.db), store.db:
+        for url, offset in [(appendix.VOLUME, 6), (appendix.CHAPTER, -12)]:
+            sid = store.source(appendix.TOPIC, url)
+            store.capture(sid, "direct_http", senate_pdf(offset), "", {})
+    appendix.run(tmp_path, collect=True, senate=True)
+    with closing(sqlite3.connect(tmp_path / "storage/catalog.sqlite")) as db:
+        assert db.execute("SELECT count(*) FROM items").fetchone()[0] == 132
+        payload, = db.execute("""SELECT payload FROM items
+            WHERE json_extract(payload,'$.references[0].locator.row')='1100'
+              AND json_extract(payload,'$.references[0].locator.column')='2026 est.'""").fetchone()
+    item = json.loads(payload)
+    assert item["data"]["hierarchy"] == ["Budgetary resources:", "Budget authority:", "Appropriations, discretionary:"]
+    assert [(r["url"], r["locator"]["printed_page"], r["locator"]["pdf_page"]) for r in item["references"]] == [
+        (appendix.VOLUME, 22, 28), (appendix.CHAPTER, 22, 10)]

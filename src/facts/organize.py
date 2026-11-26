@@ -20,6 +20,13 @@ from .organize_tables import infer_mapping, mapping_input, normalize_table, raw_
 ADAPTER_VERSION = "observations-v6"
 
 
+def adapter_version(origin):
+    # These deterministic inputs were introduced by the Senate and breadth round.
+    if origin.get("type") in {"failed_chunk_recovery", "primary_statistic"}:
+        return f"{ADAPTER_VERSION}-structured-v2"
+    return ADAPTER_VERSION
+
+
 def input_digest(item):
     return ident("input", item)
 
@@ -315,12 +322,13 @@ def adapt_all(store, topics):
         original = json.loads(row["payload"]); digest = input_digest(original)
         prior = store.db.execute("SELECT * FROM organized_coverage WHERE input_kind='item' AND input_id=?", (row["id"],)).fetchone()
         data, context = original.get("data") or {}, original.get("collection_metadata", {}).get("extraction_context", {})
+        adapter = adapter_version(context)
         did = data.get("dataset_id")
         table_version = links[did][0] if did in links else None
-        if prior and prior["input_digest"] == digest and json.loads(prior["payload"]).get("adapter_version") == ADAPTER_VERSION and json.loads(prior["payload"]).get("table_version") == table_version:
+        if prior and prior["input_digest"] == digest and json.loads(prior["payload"]).get("adapter_version") == adapter and json.loads(prior["payload"]).get("table_version") == table_version:
             counts["cached"] += 1; continue
         observation = adapt_item(original)
-        observation.processing.update({"input_digest": digest, "adapter_version": ADAPTER_VERSION})
+        observation.processing.update({"input_digest": digest, "adapter_version": adapter})
         if did in links:
             source_row = context.get("row") or data.get("source_row", {}).get("classification_id")
             observation.series_ids = links[did][1].get(str(source_row), [])
@@ -329,9 +337,9 @@ def adapt_all(store, topics):
                 observation.warnings.append("dataset_row_has_no_normalized_series")
         observation.temporal_context = temporal_context(observation, definitions.get(row["topic"], {}))
         locate_support(store, original, observation)
-        version = ident("observation-version", ADAPTER_VERSION, digest, table_version)
+        version = ident("observation-version", adapter, digest, table_version)
         store.replace_input("item:"+row["id"], [observation], version)
-        store.coverage("item", row["id"], row["topic"], digest, "deterministic", [observation.id], {"adapter_version": ADAPTER_VERSION, "table_version": table_version}, version)
+        store.coverage("item", row["id"], row["topic"], digest, "deterministic", [observation.id], {"adapter_version": adapter, "table_version": table_version}, version)
         counts["adapted"] += 1
         if counts["adapted"] % 250 == 0:
             store.db.commit()

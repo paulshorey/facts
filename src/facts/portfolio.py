@@ -13,20 +13,25 @@ def coverage(root=ROOT):
     with closing(sqlite3.connect(catalog.as_uri() + "?mode=ro", uri=True)) as db:
         # One originating source per item. Secondary citations must not inflate
         # either the denominator or the number of independently collected URLs.
-        rows = db.execute("""
-            WITH by_source AS (
-                SELECT topic, source, count(*) AS items
-                FROM items
-                WHERE kind NOT IN ('headline', 'resource') AND source IS NOT NULL
-                GROUP BY topic, source
-            )
-            SELECT t.id, count(b.source), coalesce(sum(b.items), 0), coalesce(max(b.items), 0)
-            FROM topics t LEFT JOIN by_source b ON b.topic = t.id
-            GROUP BY t.id ORDER BY count(b.source), t.id
-        """)
-        return [{"topic": topic, "originating_source_urls": sources, "sourced_items": items,
-                 "largest_source_item_share": round(largest / items, 4) if items else None}
-                for topic, sources, items, largest in rows]
+        db.execute("BEGIN")
+        topics = {topic: {"topic": topic, "originating_source_urls": 0, "sourced_items": 0,
+                          "largest_source_item_share": None, "top_sources": []}
+                  for topic, in db.execute("SELECT id FROM topics")}
+        for topic, url, count in db.execute("""
+            SELECT i.topic, s.url, count(*) AS n
+            FROM items i JOIN sources s ON s.id=i.source JOIN topics t ON t.id=i.topic
+            WHERE i.kind NOT IN ('headline', 'resource')
+            GROUP BY i.topic, i.source ORDER BY i.topic, n DESC, s.url
+        """):
+            entry = topics[topic]
+            entry["originating_source_urls"] += 1
+            entry["sourced_items"] += count
+            if len(entry["top_sources"]) < 5:
+                entry["top_sources"].append({"url": url, "items": count})
+        for entry in topics.values():
+            if entry["top_sources"]:
+                entry["largest_source_item_share"] = round(entry["top_sources"][0]["items"] / entry["sourced_items"], 4)
+        return sorted(topics.values(), key=lambda entry: (entry["originating_source_urls"], entry["topic"]))
 
 
 def main():

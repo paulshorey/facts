@@ -333,3 +333,32 @@ def test_retry_after_accepts_seconds_and_http_dates():
     later = format_datetime(datetime.now(timezone.utc) + timedelta(seconds=45), usegmt=True)
     assert 40 <= core.retry_after(later, 3) <= 46
     assert core.retry_after(format_datetime(datetime(2000, 1, 1, tzinfo=timezone.utc), usegmt=True), 3) == 0
+
+
+def test_reconciled_recovery_excluded_from_retry(queue, monkeypatch):
+    from facts.recovery import reconcile
+
+    job = queue.db.execute("SELECT * FROM extraction_jobs WHERE id='0'").fetchone()
+    queue.db.execute("UPDATE extraction_jobs SET state='failed' WHERE id='1'")
+    cid = job["capture"]
+    sid = queue.db.execute("SELECT source FROM captures WHERE id=?", (cid,)).fetchone()[0]
+    item = queue.item("topic", sid, cid, {"kind": "statistic", "data": {"source_row": {"cells": [{}]}}},
+                      {"type": "failed_chunk_recovery", "table": "T", "original_job_id": "0"})
+    queue.db.commit()
+    receipt = dict(job_id="0", original_capture_id=cid, capture_id=cid, url="https://example.com/source",
+                   table="T", rows=1, cells=1, item_ids=[item])
+    with pytest.raises(ValueError, match="Replacement items differ"):
+        reconcile(queue, [receipt, {**receipt, "job_id": "1", "item_ids": ["missing"]}])
+    assert queue.db.execute("SELECT state FROM extraction_jobs WHERE id='0'").fetchone()[0] == "failed"
+    reconcile(queue, [receipt])
+    reconcile(queue, [receipt])
+    assert queue.db.execute("SELECT count(*) FROM attempts WHERE stage='manual_recovery'").fetchone()[0] == 1
+    seen = []
+    def extract(text, *args, **kwargs):
+        seen.append(text)
+        return {}, core.Extraction(items=[]), None
+    monkeypatch.setattr(core, "llm_extract", extract)
+    core.normalize(queue, "topic", 3, 1, maximum=1, input_rate=".15", output_rate=".5",
+                   existing_only=True, retry_failed=True)
+    assert seen == ["source text 1", "source text 2"]
+    assert tuple(queue.db.execute("SELECT state,attempts FROM extraction_jobs WHERE id='0'").fetchone()) == ("recovered", 1)

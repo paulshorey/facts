@@ -40,3 +40,9 @@ environmental service measure (e.g. small-system drinking-water violations by
 population served), and a civil justice measure (e.g. eviction filings versus
 completed evictions). Rotate across these before revisiting another Capitol
 appropriation. Keep each topic's evidence cutoff explicit when opening a new edition.
+
+Record a prior-reporting assessment for each individual measure. Match the
+unit, population and denominator before assigning an article to a statistic.
+For example, the Guardian's private-well population figure can inform the
+population observation. The share of withdrawal volume from groundwater
+requires its own coverage check.
