@@ -1,0 +1,20 @@
+{
+  "schema_version": "topic.v1",
+  "slug": "unpaid-care",
+  "title": "Unpaid care and time use",
+  "request": "How much time do people spend providing unpaid care, who provides it, and how does the answer change with the survey denominator?",
+  "date_from": null,
+  "date_to": "2026-10-16",
+  "languages": [
+    "en"
+  ],
+  "searches": [
+    {
+      "family": "primary-series",
+      "objective": "How much time do people spend providing unpaid care, who provides it, and how does the answer change with the survey denominator?",
+      "search_queries": [
+        "BLS ATUS eldercare Census SIPP unpaid caregiving estimates sample denominator"
+      ]
+    }
+  ]
+}

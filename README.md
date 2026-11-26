@@ -622,3 +622,39 @@ the saved official PDFs. Continued cells cite their own page and the header on
 page 22. For example, `11.1` occupies the row-code column, and the three monetary
 values appear to its right. The private review, source comparisons and full
 schedules are under `exports/us-federal-spending/fy2027-house-office-buildings/`.
+
+#### Senate Office Buildings and the research rotation
+
+`.venv/bin/python -m facts.appendix --senate-office-buildings --format markdown`
+reads the Senate schedules on printed pages 21–22. Add `--collect` to record
+their cells. The continued financing schedule repeats its account code and
+fiscal headers. The appropriations paragraph above the table gives the proposal
+for the budget year. Check the cited public law for the preceding enacted amount.
+
+Run `.venv/bin/python -m facts.portfolio` for topic coverage and concentration
+in the live local catalog. The measure counts distinct originating source URLs
+for sourced items other than headlines and resources. One publisher can have
+many URLs, and one table can yield many items. Use the [research rotation](research/rotation.md)
+to choose the next batch and record what a news coverage check established.
+
+The portfolio report lists up to five contributing URLs per topic, ordered by
+item count with URL as the tiebreaker. The counts use the originating citation.
+Review the linked releases when assessing how many independent producers a topic covers.
+
+After a manual recovery has been reviewed, reconcile its saved receipt with the
+local catalog. This command reconciles the six inputs from the Senate and breadth round.
+
+```bash
+.venv/bin/python -m facts.recovery exports/research-rounds/senate-and-breadth/recovery-receipts.json
+```
+
+Reconciliation checks each job, capture, cited table, replacement item and cell
+count, then records the receipt in a manual recovery attempt. The terminal
+`recovered` state excludes the input from paid retries and truncated-output
+repair. The original failed attempt, error and output remain available.
+Replaying the same receipt is safe.
+
+Organized primary statistics index the observation period separately from the
+release date. For recovered Part B premiums, organized measurements retain
+dollars per month and the early rows cite their printed month ranges. The
+raw items and earlier organized versions preserve the original extraction.

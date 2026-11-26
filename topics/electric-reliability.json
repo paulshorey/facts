@@ -1,0 +1,20 @@
+{
+  "schema_version": "topic.v1",
+  "slug": "electric-reliability",
+  "title": "Electric service reliability",
+  "request": "How often do customers lose electricity, for how long, and how do definitions, location and major events change the comparison?",
+  "date_from": null,
+  "date_to": "2026-10-16",
+  "languages": [
+    "en"
+  ],
+  "searches": [
+    {
+      "family": "primary-series",
+      "objective": "How often do customers lose electricity, for how long, and how do definitions, location and major events change the comparison?",
+      "search_queries": [
+        "EIA 861 SAIDI SAIFI distribution reliability state major event days annual table"
+      ]
+    }
+  ]
+}

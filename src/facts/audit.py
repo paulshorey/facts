@@ -9,7 +9,7 @@ import pyarrow.parquet as pq
 from .contracts import Observation, SeriesDefinition
 from .core import ROOT, dumps
 from .handoff import catalog_artifacts, catalog_fingerprint, journal
-from .organize import ADAPTER_VERSION
+from .organize import adapter_version
 from .organize_store import OrganizedStore
 from .organize_tables import MAPPER_VERSION
 
@@ -33,7 +33,7 @@ def audit(root=ROOT, *, current=False):
                 series_by_dataset.setdefault(value['dataset_id'],set()).add(value['id'])
             version=processing.get('adapter_version') or processing.get('mapper_version')
             versions[version or 'unknown']+=1
-            if current and version != (MAPPER_VERSION if value['record_type']=='series' else ADAPTER_VERSION):
+            if current and version != (MAPPER_VERSION if value['record_type']=='series' else adapter_version(processing.get('origin', {}))):
                 raise ValueError('Active record uses an older normalizer')
             for ref in value.get('references',[]):
                 if ref.get('source_id') and ref['source_id'] not in sources: raise ValueError('Missing referenced source')

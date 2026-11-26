@@ -1,0 +1,20 @@
+{
+  "schema_version": "topic.v1",
+  "slug": "household-water",
+  "title": "Household water access and supply",
+  "request": "Who supplies household water, how is use estimated, and which populations are covered by published water statistics?",
+  "date_from": null,
+  "date_to": "2026-10-16",
+  "languages": [
+    "en"
+  ],
+  "searches": [
+    {
+      "family": "primary-series",
+      "objective": "Who supplies household water, how is use estimated, and which populations are covered by published water statistics?",
+      "search_queries": [
+        "USGS self supplied domestic water withdrawals estimates private wells Census household water supply"
+      ]
+    }
+  ]
+}

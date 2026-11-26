@@ -622,3 +622,43 @@ def test_source_comparison_follows_item_into_views_and_export(tmp_path):
     assert f"  {comparison_line}" in (tmp_path / "exports/topic/inventory.md").read_text().splitlines()
     organized.db.close()
     raw.db.close()
+
+
+def test_primary_statistic_observation_period_is_queryable_after_replay(tmp_path, monkeypatch):
+    from facts.organize import adapt_all
+    store = Store(tmp_path)
+    topic(store)
+    sid = store.source("topic", "https://example.com/release")
+    cid = store.capture(sid, "direct_http", b"release", "Survey results")
+    store.item("topic", sid, cid, {"kind": "statistic", "title": "Survey", "published": "2025-09-25",
+                                  "data": {"period": "2023–2024"}}, {"type": "primary_statistic"})
+    store.db.commit()
+    organized = OrganizedStore(tmp_path)
+    with monkeypatch.context() as old:
+        old.setattr("facts.organize.adapter_version", lambda _: "observations-v6")
+        adapt_all(organized, ["topic"])
+    assert adapt_all(organized, ["topic"]) == {"adapted": 1}
+    result, = organized.query("topic", date_from="2024-01-01", date_to="2024-12-31")
+    assert result["temporal_context"] == "before_period"
+    assert [(d["role"], d["start"], d["end"]) for d in result["dates"]] == [
+        ("publication", "2025-09-25", "2025-09-25"), ("observation_period", "2023-01-01", "2024-12-31")]
+    assert not organized.query("topic", date_from="2025-01-01")
+    assert adapt_all(organized, ["topic"]) == {"cached": 1}
+
+
+def test_recovered_premium_preserves_rate_and_month_range(tmp_path):
+    store = Store(tmp_path)
+    topic(store)
+    period = "July 1966–March 1968"
+    original = item(store, data={"source_row": {"period": period, "period_basis": "Calendar year"}},
+                    measurements=[{"value": "3", "unit": "USD per month", "period": period}])
+    origin = {"type": "failed_chunk_recovery", "table": "III.C2", "period_basis": "Calendar year", "period": period}
+    original["references"][0]["locator"] = origin
+    original["collection_metadata"]["extraction_context"] = origin
+    saved = dumps(original)
+    result = adapt_item(original)
+    assert dumps(original) == saved
+    assert result.processing["origin"]["period_basis"] == result.references[0]["locator"]["period_basis"] == "explicit month range"
+    assert result.source_fields["data"]["source_row"]["period_basis"] == "Calendar year"
+    assert (result.dates[0].start, result.dates[0].end) == ("1966-07-01", "1968-03-31")
+    assert (result.measurements[0].value, result.measurements[0].unit) == ("3", "USD per month")

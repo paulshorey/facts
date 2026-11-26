@@ -268,6 +268,10 @@ def adapt_item(item):
         result.dates.append(parse_date(data["date"], data.get("date_type") or "event", "/data/date"))
     if item.get("published"):
         result.dates.append(parse_date(item["published"], "publication", "/published"))
+    if origin.get("type") == "primary_statistic" and data.get("period"):
+        period = parse_date(data["period"], "observation_period", "/data/period")
+        if not any(d.role == period.role and d.original_expression == period.original_expression for d in result.dates):
+            result.dates.append(period)
     if data.get("fiscal_period"):
         result.dates.append(parse_date(data["fiscal_period"], "reporting_period", "/data/fiscal_period"))
     for i, m in enumerate(item.get("measurements") or []):
@@ -279,6 +283,25 @@ def adapt_item(item):
             unit=m.get("unit"), value=v, metric=m.get("metric") or m.get("name") or item["title"],
             period=m.get("period"), basis=m.get("basis") or data.get("basis"),
             qualifier=m.get("qualifier"), input_path=f"/measurements/{i}"))
+    if origin.get("type") == "failed_chunk_recovery":
+        for measure in result.measurements:
+            if measure.original_unit == "USD per month":
+                measure.unit = measure.original_unit
+        row = data.get("source_row") or {}
+        # Early Part B premium rates apply to the entire printed month range.
+        # The source's calendar-year heading starts below these rows.
+        months = re.fullmatch(r"([A-Za-z]+ [0-9]{4})–([A-Za-z]+ [0-9]{4})", plain(row.get("period")))
+        if months and origin.get("table") == "III.C2":
+            first, last = (parse_date(bound) for bound in months.groups())
+            if first.start and last.end and first.start <= last.end:
+                result.dates.append(DateValue(original_expression=row["period"], role="reporting_period",
+                    start=first.start, end=last.end, precision="range", calendar="calendar",
+                    input_path="/data/source_row/period"))
+                result.processing["origin"] = {**origin, "period_basis": "explicit month range"}
+                for ref in result.references:
+                    locator = ref.get("locator", {})
+                    if locator.get("table") == "III.C2" and locator.get("period") == row["period"]:
+                        ref["locator"] = {**locator, "period_basis": "explicit month range"}
     for i, m in enumerate(data.get("amounts") or []):
         if isinstance(m, dict):
             expression = next((m[k] for k in ["original_expression", "original_text", "text", "amount", "value"] if m.get(k) is not None), "")
