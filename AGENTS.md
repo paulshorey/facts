@@ -7,9 +7,15 @@ do not convert them into conclusions.
 
 ## Workspace
 
-Prefer the primary local checkout when free; use a worktree when another task is
-using it. After merging a PR, return the primary checkout to `main` and run
-`git pull --ff-only` when free, leaving it clean.
+Use a new branch in a task worktree for every change, created from a freshly
+fetched `origin/main`. Open a ready PR whose description gives the next engineer
+the context, checks, and remaining work. After merging, fast-forward the primary
+checkout to `origin/main` when it is free.
+
+The collector writes to `storage/` beside the code it imports, and the existing
+catalog and `.venv` are in the primary checkout. Run collection there, never
+against a new catalog in a task worktree. To test worktree code, run
+`PYTHONPATH=src <primary>/.venv/bin/python -m pytest` from the worktree.
 
 ## Collection and storage
 
