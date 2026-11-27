@@ -43,14 +43,6 @@ If something goes wrong, stop the affected operation and report the relevant fin
 data, and logs. Redact secrets and private content.
 When unsure, research before deciding: search the web for current techniques and best practices.
 
-# Improve your instructions
-
-Before you finish, note where you struggled and which instructions, tools, or skills
-were missing or wrong. Record project lessons in this file or the project docs.
-Put lessons that apply across projects in `~/.agents` when you have access. Keep edits
-short and specific, and propose larger changes in your reply. If you cannot edit the
-relevant files, suggest those changes in your reply.
-
 # Next steps
 
 Consider what was recently done, what is in progress, and how it serves the goal.
